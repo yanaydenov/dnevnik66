@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>Форма входа</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+        .login-container {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+        }
+        .login-container h2 {
+            text-align: center;
+        }
+        .login-container p {
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #555;
+        }
+        .login-container label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        .login-container input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .login-container button {
+            width: 100%;
+            padding: 10px;
+            background-color: #2090d1;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .login-container button:hover {
+            background-color: #2090d1;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-container">
+    <form id="tokensForm">
+        <label for="Auth__refresh">Auth__refresh</label>
+        <input type="text" id="Auth__refresh" name="Auth__refresh" required>
+
+        <label for="Auth__token">Auth__token</label>
+        <input type="text" id="Auth__token" name="Auth__token" required>
+
+        <button type="submit">Подтвердить</button>
+    </form>
+<script>
+    form = document.getElementById('tokensForm')
+
+    form.addEventListener('submit', function (event) {
+    webApp = window.Telegram.WebApp
+    
+    refreshToken= event.target.elements.Auth__refresh.value
+    accessToken= event.target.elements.Auth__token.value
+    webApp.sendData(JSON.stringify({ accessToken, refreshToken }))
+    
+    event.target.reset()
+    event.preventDefault()
+    })
+  </script>
+</div>
+
+</body>
+</html>
