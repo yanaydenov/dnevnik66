@@ -9,7 +9,6 @@ import json
 
 load_dotenv()
 tgtoken = os.getenv('TOKEN')
-webapp_url = os.getenv('WEBAPP_URL')
 bot = telebot.TeleBot(tgtoken)
 
 week = None
@@ -52,9 +51,9 @@ def get_grades_year(message):
                 '   Итог: '+i['yeargrade']+'\n'
         if res != '':
             res = 'Четвертные оценки\n\n'+res
-            bot.send_message(message.chat.id, res)
+            bot.send_message(message.chat.id, res, reply_markup=buttons(message))
         else:
-            bot.send_message(message.chat.id, 'Оценок в четвертях пока нет')
+            bot.send_message(message.chat.id, 'Оценок в четвертях пока нет', reply_markup=buttons(message))
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -85,7 +84,7 @@ def get_grades_period(message, period):
                 str(period+1)+' четверти пока нет оценок'
         else:
             res = str(period+1)+' четверть\n\n'+res
-        bot.send_message(message.chat.id, res)
+        bot.send_message(message.chat.id, res, reply_markup=buttons(message))
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -142,12 +141,12 @@ def start_message(message):
 @bot.message_handler(commands=['login'])
 def login(message):
     if db.get(message.chat.id) == None:
-        webapp = types.WebAppInfo(webapp_url)
+        webapp = types.WebAppInfo("https://zasdc.ru/static/bot/login.html")
         b1 = types.KeyboardButton(text="Регистрация", web_app=webapp)
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         markup.add(b1)
         bot.send_message(
-            message.chat.id, "Чтобы зарегистрироваться нажмите кнопку снизу", reply_markup=markup)
+            message.chat.id, "Чтобы зарегистрироваться нажмите кнопку снизу\\. \nТакже обязательно прочтите [инструкцию](https://telegra.ph/Instrukciya-dlya-registracii-10-25)", reply_markup=markup, parse_mode='MarkdownV2')
     else:
         b1 = types.InlineKeyboardButton(
             "📄 Список команд", callback_data='help')

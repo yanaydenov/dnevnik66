@@ -4,8 +4,7 @@ import time
 import datetime
 
 while True:
-    for i in db.list_tids():
-        id = i[0]
+    for id in db.list_tids():
         tokens = db.get(id)
 
         d = dnevnik(tokens)

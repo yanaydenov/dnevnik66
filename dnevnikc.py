@@ -1,5 +1,7 @@
 import requests
 import json
+from fake_useragent import UserAgent
+ua = UserAgent().random
 year = '2024'
 week = None
 
@@ -10,7 +12,7 @@ class dnevnik:
         self.classID = None
         self.periodsID = []
         self.token, self.refreshtoken = tokens
-        print(self.token[-5:])
+        print(f'<{self.token}>\n<{self.refreshtoken}>')
 
     def refresh(self):
         r = requests.post('https://dnevnik.egov66.ru/api/auth/Token/Refresh',
@@ -26,12 +28,12 @@ class dnevnik:
             return (self.token, self.refreshtoken)
 
     def headers(self):
-        return {'content-type': 'application/json', "authorization": "Bearer"+" "+self.token,  'accept': 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'}
+        return {'content-type': 'application/json', "authorization": "Bearer"+" "+self.token,  'accept': 'application/json', 'user-agent': ua}
 
     def ids(self):
         r = requests.get(
             'https://dnevnik.egov66.ru/api/students',   headers=self.headers())
-        print(r)
+        print(r, '\n\n\n')
         id = json.loads(r.text)
 
         self.studentID = id['students'][0]['id']

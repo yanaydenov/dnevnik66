@@ -35,7 +35,7 @@ def list_tids():
     cursor.execute('SELECT telegramid FROM users')
     res = list(cursor)
     cursor.close()
-    return res
+    return [i[0] for i in res]
 
 
 def delete(tid):
