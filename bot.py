@@ -14,6 +14,15 @@ bot = telebot.TeleBot(tgtoken)
 week = None
 weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
 
+spec_chr = ['\\', '_', '*', '[', ']',
+            '(', ')', '~', '`', '>', '<', '&', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+
+
+def esc_md(text):
+    for char in spec_chr:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 
 def buttons(message):
     temp = db.get(message.chat.id)
@@ -28,7 +37,8 @@ def buttons(message):
         b4 = types.KeyboardButton("📋 Оценки на этой неделе")
         b5 = types.KeyboardButton("📋 Все оценки")
         b6 = types.KeyboardButton("📄 Список команд")
-        markup.add(b1).row(b2, b3).row(b5).row(b4).row(b6)
+        b7 = types.KeyboardButton("✍️ Домашние задания")
+        markup.add(b1).row(b2, b3).row(b5).row(b7, b4).row(b6)
         return markup
     else:
         return types.ReplyKeyboardRemove()
@@ -51,9 +61,11 @@ def get_grades_year(message):
                 '   Итог: '+i['yeargrade']+'\n'
         if res != '':
             res = 'Четвертные оценки\n\n'+res
-            bot.send_message(message.chat.id, res, reply_markup=buttons(message))
+            bot.send_message(message.chat.id, res,
+                             reply_markup=buttons(message))
         else:
-            bot.send_message(message.chat.id, 'Оценок в четвертях пока нет', reply_markup=buttons(message))
+            bot.send_message(
+                message.chat.id, 'Оценок в четвертях пока нет', reply_markup=buttons(message))
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -75,7 +87,7 @@ def get_grades_period(message, period):
                         temp += u+'/'
                     temp += j[-1]+' • '
             if temp == '':
-                res += i['name']+'\n└ Нет оценок\n'
+                res += i['name']+'\n└ ━\n'
             else:
                 res += i['name']+" • " + \
                     str(round(i['averagew'], 2))+"\n└ "+temp[:-2]+'\n'
@@ -186,7 +198,7 @@ def schedule(message, day):
         res = weekdays[day]+'\n\n'
         if sch != 0:
             for i in sch:
-                res += i['num']+' | '+i['name']+" "+i['room']+"\n"
+                res += i['num']+' • '+i['name']+" "+i['room']+"\n"
         else:
             res += "Уроков нет"
         bot.send_message(message.chat.id, res)
@@ -200,7 +212,7 @@ def schedule(message, day):
 
 @bot.message_handler(commands=['help'])
 def help(message):
-    msg = '🛠Сервис\n/login - Регистрация\n/help - Это меню\n/profile - Информация об аккаунте\n/delacc - Удалить аккаунт в боте\n\n📅Расписание\n/all - Расписание на любой день\n/today - Расписание на сегодня\n/nextday - Расписание на завтра\n/calls - Расписание звонков\n\n📋Оценки\n/grades - Все оценки\n/wgrades - Оценки на этой неделе\n/pgrades - Четвертные оценки'
+    msg = '🛠Сервис\n/login - Регистрация\n/help - Это меню\n/profile - Информация об аккаунте\n/delacc - Удалить аккаунт в боте\n\n📅Расписание\n/all - Расписание на любой день\n/today - Расписание на сегодня\n/nextday - Расписание на завтра\n/calls - Расписание звонков\n\n📋Оценки\n/grades - Все оценки\n/wgrades - Оценки на этой неделе\n/pgrades - Четвертные оценки\n\n✍️Домашнее задание\n/homework - ДЗ по дням'
     bot.send_message(message.chat.id, msg, reply_markup=buttons(message))
 
 
@@ -231,6 +243,44 @@ def profile(message):
         temp = d.profile()
         bot.send_message(message.chat.id, temp['user']['lastName']+" "+temp['user']['firstName']+" "+str(
             temp['classInfo']['number'])+temp['classInfo']['litera']+'\n\nУдалить аккаунт - /delacc')
+    else:
+        markup = types.InlineKeyboardMarkup()
+        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
+        markup.add(b1)
+        bot.send_message(
+            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
+
+
+def texthomework(message, hw):
+    date = [int(i) for i in hw['date'].split('-')]
+    now = datetime(date[0], date[1], date[2])
+    res = esc_md(weekdays[now.weekday()]+' • '+str(date[2]) +
+                 '-'+str(date[1])+'-'+str(date[0])+'\n\n')
+    for i in hw['homework']:
+        res += esc_md(i[0])+':\n```\n'+esc_md(i[1])+'```\n'
+    markup = types.InlineKeyboardMarkup()
+    print(res)
+    cd = 0
+    if hw['pages']['previousDate'] != "0001-01-01":
+        cd = 'hw'+hw['pages']['previousDate']
+    b1 = types.InlineKeyboardButton("◀", callback_data=cd)
+    cd = 0
+    if hw['pages']['nextDate'] != "0001-01-01":
+        cd = 'hw'+hw['pages']['nextDate']
+    b2 = types.InlineKeyboardButton("▶", callback_data=cd)
+    markup.add(b1, b2)
+
+    bot.send_message(message.chat.id, res, reply_markup=markup,
+                     parse_mode='MarkdownV2')
+
+
+@bot.message_handler(commands=['homework'])
+def homework(message):
+    temp = db.get(message.chat.id)
+    if temp != None:
+        d = dnevnik(temp)
+        temp = d.homework(None)
+        texthomework(message, temp)
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -278,6 +328,10 @@ def callback_msg(callback):
                 bot.delete_message(callback.message.chat.id,
                                    callback.message.message_id)
                 get_grades_year(callback.message)
+        if 'hw' in callback.data:
+            d = dnevnik(temp)
+            temp = d.homework(callback.data[2:])
+            texthomework(callback.message, temp)
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -345,6 +399,8 @@ def text(message):
             get_grades_week(message)
         elif 'Все оценки' in message.text:
             grades_select(message)
+        elif 'Домашние' in message.text:
+            homework(message)
 
     else:
         markup = types.InlineKeyboardMarkup()

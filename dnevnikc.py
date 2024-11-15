@@ -128,3 +128,17 @@ class dnevnik:
             res.append({'name': i['lesson']['name'],
                        'grades': gr, 'yeargrade': i['yearGrade']})
         return res
+
+    def homework(self, date):
+        self.ids()
+        if date != None:
+            url = f'https://dnevnik.egov66.ru/api/homework?date={date}&studentId='+self.studentID
+        else:
+            url = 'https://dnevnik.egov66.ru/api/homework?studentId='+self.studentID
+
+        r = requests.get(url, headers=self.headers())
+        hw = json.loads(r.text)
+        res = {'date': hw['date'], 'pages': hw["pagination"], 'homework': []}
+        for i in hw['homeworks']:
+            res['homework'].append([i['lessonName'], i["description"]])
+        return res
