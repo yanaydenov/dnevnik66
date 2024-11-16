@@ -198,7 +198,7 @@ def schedule(message, day):
         res = weekdays[day]+'\n\n'
         if sch != 0:
             for i in sch:
-                res += i['num']+' • '+i['name']+" "+i['room']+"\n"
+                res += i['num']+'│'+i['name']+" • "+i['room']+"\n"
         else:
             res += "Уроков нет"
         bot.send_message(message.chat.id, res)
@@ -212,7 +212,7 @@ def schedule(message, day):
 
 @bot.message_handler(commands=['help'])
 def help(message):
-    msg = '🛠Сервис\n/login - Регистрация\n/help - Это меню\n/profile - Информация об аккаунте\n/delacc - Удалить аккаунт в боте\n\n📅Расписание\n/all - Расписание на любой день\n/today - Расписание на сегодня\n/nextday - Расписание на завтра\n/calls - Расписание звонков\n\n📋Оценки\n/grades - Все оценки\n/wgrades - Оценки на этой неделе\n/pgrades - Четвертные оценки\n\n✍️Домашнее задание\n/homework - ДЗ по дням'
+    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккаунте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
     bot.send_message(message.chat.id, msg, reply_markup=buttons(message))
 
 
@@ -257,9 +257,9 @@ def texthomework(message, hw):
     res = esc_md(weekdays[now.weekday()]+' • '+str(date[2]) +
                  '-'+str(date[1])+'-'+str(date[0])+'\n\n')
     for i in hw['homework']:
-        res += esc_md(i[0])+':\n```\n'+esc_md(i[1])+'```\n'
+        res += esc_md(i[0])+':\n>'+esc_md(i[1])+'||\n'
     markup = types.InlineKeyboardMarkup()
-    print(res)
+
     cd = 0
     if hw['pages']['previousDate'] != "0001-01-01":
         cd = 'hw'+hw['pages']['previousDate']
@@ -269,9 +269,7 @@ def texthomework(message, hw):
         cd = 'hw'+hw['pages']['nextDate']
     b2 = types.InlineKeyboardButton("▶", callback_data=cd)
     markup.add(b1, b2)
-
-    bot.send_message(message.chat.id, res, reply_markup=markup,
-                     parse_mode='MarkdownV2')
+    return res, markup
 
 
 @bot.message_handler(commands=['homework'])
@@ -280,7 +278,9 @@ def homework(message):
     if temp != None:
         d = dnevnik(temp)
         temp = d.homework(None)
-        texthomework(message, temp)
+        res, markup = texthomework(message, temp)
+        bot.send_message(message.chat.id, res,
+                         reply_markup=markup, parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -331,7 +331,9 @@ def callback_msg(callback):
         if 'hw' in callback.data:
             d = dnevnik(temp)
             temp = d.homework(callback.data[2:])
-            texthomework(callback.message, temp)
+            res, markup = texthomework(callback.message, temp)
+            bot.edit_message_text(chat_id=callback.message.chat.id, message_id=callback.message.message_id,
+                                  text=res, reply_markup=markup, parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -342,7 +344,7 @@ def callback_msg(callback):
 
 @bot.message_handler(commands=['calls'])
 def calls(message):
-    bot.send_message(message.chat.id, 'Расписание звонков\n\n1 • 8:30 - 9:10\n2 • 9:20 - 10:00\n3 • 10:20 - 11:00\n4 • 11:20 - 12:00\n5 • 12:20 - 13:00\n6 • 13:10 - 13:50\n7 • 14:05 - 14:45\n8 • 14.55 - 15:35')
+    bot.send_message(message.chat.id, 'Расписание звонков\n\n1 │ 8:30 - 9:10\n2 │ 9:20 - 10:00\n3 │ 10:20 - 11:00\n4 │ 11:20 - 12:00\n5 │ 12:20 - 13:00\n6 │ 13:10 - 13:50\n7 │ 14:05 - 14:45\n8 │ 14:55 - 15:35')
 
 
 @bot.message_handler(commands=['grades'])
