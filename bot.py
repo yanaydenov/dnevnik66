@@ -12,7 +12,8 @@ tgtoken = os.getenv('TOKEN')
 bot = telebot.TeleBot(tgtoken)
 
 week = None
-weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+weekdays = ['Понедельник', 'Вторник', 'Среда',
+            'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
 
 spec_chr = ['\\', '_', '*', '[', ']',
             '(', ')', '~', '`', '>', '<', '&', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -194,14 +195,18 @@ def schedule(message, day):
     temp = db.get(message.chat.id)
     if temp != None:
         d = dnevnik(temp)
-        sch = d.schedule(day)
         res = weekdays[day]+'\n\n'
-        if sch != 0:
-            for i in sch:
-                res += i['num']+'│'+i['name']+" • "+i['room']+"\n"
+        if day != 6:
+            sch = d.schedule(day)
+
+            if sch != []:
+                for i in sch:
+                    res += i['num']+'│'+esc_md(i['name'])+" • "+i['room']+"\n"
+            else:
+                res += "*В этот день уроков нет*"
         else:
-            res += "Уроков нет"
-        bot.send_message(message.chat.id, res)
+            res += "*В этот день уроков нет*"
+        bot.send_message(message.chat.id, res, parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -256,8 +261,11 @@ def texthomework(message, hw):
     now = datetime(date[0], date[1], date[2])
     res = esc_md(weekdays[now.weekday()]+' • '+str(date[2]) +
                  '-'+str(date[1])+'-'+str(date[0])+'\n\n')
-    for i in hw['homework']:
-        res += esc_md(i[0])+':\n>'+esc_md(i[1])+'||\n'
+    if hw['homework'] != []:
+        for i in hw['homework']:
+            res += esc_md(i[0])+':\n>'+esc_md(i[1])+'||\n'
+    else:
+        res += '*Нет домашних заданий*'
     markup = types.InlineKeyboardMarkup()
 
     cd = 0
@@ -378,9 +386,9 @@ def text(message):
         help(message)
     elif temp != None:
         if message.text == 'На сегодня' or message.text == '/today':
-            schedule(message, datetime.now().weekday() % 6)
+            schedule(message, datetime.now().weekday())
         elif message.text == 'На завтра' or message.text == '/nextday':
-            schedule(message, (datetime.now().weekday()+1) % 6)
+            schedule(message, (datetime.now().weekday()+1) % 7)
         elif 'Расписание ' in message.text or message.text == '/all':
             markup = types.InlineKeyboardMarkup()
             b1 = types.InlineKeyboardButton(
