@@ -140,5 +140,5 @@ class dnevnik:
         hw = json.loads(r.text)
         res = {'date': hw['date'], 'pages': hw["pagination"], 'homework': []}
         for i in hw['homeworks']:
-            res['homework'].append([i['lessonName'], i["description"]])
+            res['homework'].append([i['lessonName'], i["description"], len(i['homeWorkFiles'])])
         return res

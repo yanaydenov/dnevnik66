@@ -9,6 +9,7 @@ import json
 
 load_dotenv()
 tgtoken = os.getenv('TOKEN')
+admin_tid = int(os.getenv('ADMIN_TELEGRAMID'))
 bot = telebot.TeleBot(tgtoken)
 
 week = None
@@ -24,6 +25,19 @@ def esc_md(text):
         text = text.replace(char, f'\\{char}')
     return text
 
+@bot.message_handler(commands=['db'])
+def showusers(message):
+    if message.chat.id == admin_tid:
+        users = db.list_tids()
+        print(users)
+        res='Зарегистрированные пользователи\\: *'+str(len(users))+'*\n\n'
+        for i in range(len(users)):
+            temp = db.get(users[i])
+            d=dnevnik(temp)
+            temp = d.profile()
+            res+=str(i+1)+'\\. `'+str(users[i])+'`\n'+temp['user']['lastName']+" "+temp['user']['firstName']+" "+str(
+            temp['classInfo']['number'])+temp['classInfo']['litera']+'\n\n'
+        bot.send_message(admin_tid, res, parse_mode='MarkdownV2')
 
 def buttons(message):
     temp = db.get(message.chat.id)
@@ -79,25 +93,21 @@ def get_grades_period(message, period):
     temp = db.get(message.chat.id)
     if temp != None:
         d = dnevnik(temp)
-        res = ''
+        res = str(period+1)+' четверть\n\n'
         for i in d.grades_period(period):
             temp = ''
             if i['grades'] != []:
                 for j in i['grades']:
                     for u in j[:-1]:
-                        temp += u+'/'
+                        temp += u+'\\/'
                     temp += j[-1]+' • '
-            if temp == '':
-                res += i['name']+'\n└ ━\n'
-            else:
-                res += i['name']+" • " + \
-                    str(round(i['averagew'], 2))+"\n└ "+temp[:-2]+'\n'
-        if res == '':
-            res = ['В', 'Во', 'В', 'В'][period]+' ' + \
-                str(period+1)+' четверти пока нет оценок'
-        else:
-            res = str(period+1)+' четверть\n\n'+res
-        bot.send_message(message.chat.id, res, reply_markup=buttons(message))
+            if temp != '':
+                res += esc_md(i['name'])+" • " + \
+                    esc_md(str(round(i['averagew'], 2)))+"\n└ "+temp[:-2]+'\n'
+        if res == str(period+1)+' четверть\n\n':
+            res += '*Нет оценок*'
+
+        bot.send_message(message.chat.id, res, reply_markup=buttons(message), parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -119,10 +129,10 @@ def get_grades_week(message):
                 res += '/'.join(str(x) for x in j)+" • "
             res = res[:-2]+'\n'
         if res == '':
-            res = 'На этой неделе пока нет оценок'
+            res = 'Текущая неделя\n\n*Нет оценок*'
         else:
-            res = 'Текущая неделя\n\n'+res
-        bot.send_message(message.chat.id, res)
+            res = 'Текущая неделя\n\n'+esc_md(res)
+        bot.send_message(message.chat.id, res, parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -263,20 +273,29 @@ def texthomework(message, hw):
                  '-'+str(date[1])+'-'+str(date[0])+'\n\n')
     if hw['homework'] != []:
         for i in hw['homework']:
-            res += esc_md(i[0])+':\n>'+esc_md(i[1])+'||\n'
+            files=''
+            if i[2]!=0:
+                files=' \\(📎 '+str(i[2])+' '+['файлов','файл', 'файла', 'файла','файла','файлов','файлов','файлов','файлов','файлов'][i[2]%10]+'\\)'
+            
+            res += esc_md(i[0])+files+':\n>'+esc_md(i[1])+'||\n'
     else:
         res += '*Нет домашних заданий*'
     markup = types.InlineKeyboardMarkup()
 
-    cd = 0
+    cd1 = 0
     if hw['pages']['previousDate'] != "0001-01-01":
-        cd = 'hw'+hw['pages']['previousDate']
-    b1 = types.InlineKeyboardButton("◀", callback_data=cd)
-    cd = 0
+        cd1 = 'hw'+hw['pages']['previousDate']
+        b1 = types.InlineKeyboardButton("◀", callback_data=cd1)
+    cd2 = 0
     if hw['pages']['nextDate'] != "0001-01-01":
-        cd = 'hw'+hw['pages']['nextDate']
-    b2 = types.InlineKeyboardButton("▶", callback_data=cd)
-    markup.add(b1, b2)
+        cd2 = 'hw'+hw['pages']['nextDate']
+        b2 = types.InlineKeyboardButton("▶", callback_data=cd2)
+    if cd1==0:
+        markup.add(b2)
+    elif cd2==0:
+        markup.add(b1)
+    else:
+        markup.add(b1,b2)
     return res, markup
 
 
