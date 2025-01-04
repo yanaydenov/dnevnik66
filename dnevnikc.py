@@ -68,11 +68,11 @@ class dnevnik:
         return res
 
     def profile(self):
-        self.ids()
-        url = 'https://dnevnik.egov66.ru/api/myprofile?studentId='+self.studentID
-        r = requests.get(url, headers=self.headers())
-        profile = json.loads(r.text)
-        return profile
+        r = requests.get(
+            'https://dnevnik.egov66.ru/api/students',   headers=self.headers())
+        id = json.loads(r.text)['students']
+
+        return id[0]
 
     def grades_period(self, period):
         self.ids()

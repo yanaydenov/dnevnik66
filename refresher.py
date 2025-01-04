@@ -15,7 +15,7 @@ while True:
             print(id, '+', res[0][-5:])
         else:
             db.delete(id)
-            print(datetime.datetime.now().time()[:-7])
+            print(str(datetime.datetime.now().time())[:-7])
             print(id, '-')
 
     time.sleep(60*60*3)

@@ -25,19 +25,17 @@ def esc_md(text):
         text = text.replace(char, f'\\{char}')
     return text
 
+
 @bot.message_handler(commands=['db'])
 def showusers(message):
     if message.chat.id == admin_tid:
         users = db.list_tids()
         print(users)
-        res='Зарегистрированные пользователи\\: *'+str(len(users))+'*\n\n'
+        res = 'Зарегистрированные пользователи\\: *'+str(len(users))+'*\n\n'
         for i in range(len(users)):
-            temp = db.get(users[i])
-            d=dnevnik(temp)
-            temp = d.profile()
-            res+=str(i+1)+'\\. `'+str(users[i])+'`\n'+temp['user']['lastName']+" "+temp['user']['firstName']+" "+str(
-            temp['classInfo']['number'])+temp['classInfo']['litera']+'\n\n'
-        bot.send_message(admin_tid, res, parse_mode='MarkdownV2')
+            res += str(i+1)+'\\. `'+str(users[i])+'\n\n'
+            bot.send_message(admin_tid, res, parse_mode='MarkdownV2')
+
 
 def buttons(message):
     temp = db.get(message.chat.id)
@@ -46,7 +44,7 @@ def buttons(message):
         d = dnevnik(temp)
         temp = d.profile()
         b1 = types.KeyboardButton(
-            "🗓 Расписание "+str(temp['classInfo']['number'])+temp['classInfo']['litera'])
+            "🗓 Расписание"+" "+str(temp['className']))
         b2 = types.KeyboardButton("На завтра")
         b3 = types.KeyboardButton("На сегодня")
         b4 = types.KeyboardButton("📋 Оценки на этой неделе")
@@ -107,7 +105,8 @@ def get_grades_period(message, period):
         if res == str(period+1)+' четверть\n\n':
             res += '*Нет оценок*'
 
-        bot.send_message(message.chat.id, res, reply_markup=buttons(message), parse_mode='MarkdownV2')
+        bot.send_message(message.chat.id, res, reply_markup=buttons(
+            message), parse_mode='MarkdownV2')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
@@ -227,7 +226,7 @@ def schedule(message, day):
 
 @bot.message_handler(commands=['help'])
 def help(message):
-    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккаунте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
+    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккауте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
     bot.send_message(message.chat.id, msg, reply_markup=buttons(message))
 
 
@@ -250,20 +249,22 @@ def deleteaccount(message):
             message.chat.id, 'Чтобы удалить аккаунт, нужно зарегистрироваться', reply_markup=markup)
 
 
+
 @bot.message_handler(commands=['profile'])
 def profile(message):
     temp = db.get(message.chat.id)
     if temp != None:
         d = dnevnik(temp)
         temp = d.profile()
-        bot.send_message(message.chat.id, temp['user']['lastName']+" "+temp['user']['firstName']+" "+str(
-            temp['classInfo']['number'])+temp['classInfo']['litera']+'\n\nУдалить аккаунт - /delacc')
+        bot.send_message(message.chat.id, temp['lastName']+" "+temp['firstName']+" "+temp['surName']+" "+
+            temp['className']+'\n'+temp['orgName']+'\n\nУдалить аккаунт - /delacc')
     else:
         markup = types.InlineKeyboardMarkup()
         b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
         markup.add(b1)
         bot.send_message(
             message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
+
 
 
 def texthomework(message, hw):
@@ -273,10 +274,11 @@ def texthomework(message, hw):
                  '-'+str(date[1])+'-'+str(date[0])+'\n\n')
     if hw['homework'] != []:
         for i in hw['homework']:
-            files=''
-            if i[2]!=0:
-                files=' \\(📎 '+str(i[2])+' '+['файлов','файл', 'файла', 'файла','файла','файлов','файлов','файлов','файлов','файлов'][i[2]%10]+'\\)'
-            
+            files = ''
+            if i[2] != 0:
+                files = ' \\(📎 '+str(i[2])+' '+['файлов', 'файл', 'файла', 'файла', 'файла',
+                                                'файлов', 'файлов', 'файлов', 'файлов', 'файлов'][i[2] % 10]+'\\)'
+
             res += esc_md(i[0])+files+':\n>'+esc_md(i[1])+'||\n'
     else:
         res += '*Нет домашних заданий*'
@@ -290,12 +292,12 @@ def texthomework(message, hw):
     if hw['pages']['nextDate'] != "0001-01-01":
         cd2 = 'hw'+hw['pages']['nextDate']
         b2 = types.InlineKeyboardButton("▶", callback_data=cd2)
-    if cd1==0:
+    if cd1 == 0:
         markup.add(b2)
-    elif cd2==0:
+    elif cd2 == 0:
         markup.add(b1)
     else:
-        markup.add(b1,b2)
+        markup.add(b1, b2)
     return res, markup
 
 
