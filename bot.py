@@ -226,7 +226,7 @@ def schedule(message, day):
 
 @bot.message_handler(commands=['help'])
 def help(message):
-    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккауте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
+    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккаунте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
     bot.send_message(message.chat.id, msg, reply_markup=buttons(message))
 
 
