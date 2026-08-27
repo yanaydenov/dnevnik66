@@ -64,9 +64,42 @@ def test_rich_calls():
     blocks = rf.rich_calls()
     assert any(b.get("type") == "heading" for b in blocks)
     assert any(b.get("type") == "table" for b in blocks)
+    assert any(b.get("type") == "buttons" for b in blocks)
 
 
 def test_rich_help():
     blocks = rf.rich_help()
     assert any(b.get("type") == "heading" for b in blocks)
-    assert any(b.get("type") == "divider" for b in blocks)
+    assert any(b.get("type") == "buttons" for b in blocks)
+
+
+def test_rich_start():
+    blocks_unreg = rf.rich_start(is_registered=False, webapp_url="https://example.com")
+    assert any(b.get("type") == "heading" for b in blocks_unreg)
+    assert any(b.get("type") == "buttons" for b in blocks_unreg)
+
+    blocks_reg = rf.rich_start(is_registered=True, student_name="Иван")
+    assert any(b.get("type") == "heading" for b in blocks_reg)
+    assert any(b.get("type") == "buttons" for b in blocks_reg)
+
+
+def test_rich_profile():
+    p = {"firstName": "Иван", "lastName": "Иванов", "className": "10В", "orgName": "Лицей 1"}
+    blocks = rf.rich_profile(p, "2025", is_semester=True)
+    assert any(b.get("type") == "heading" for b in blocks)
+    assert any(b.get("type") == "table" for b in blocks)
+    assert any(b.get("type") == "buttons" for b in blocks)
+
+
+def test_rich_grades_menu():
+    periods = [{"name": "1 Полугодие"}, {"name": "2 Полугодие"}]
+    blocks = rf.rich_grades_menu(periods, is_semester=True, school_year="2025")
+    assert any(b.get("type") == "heading" for b in blocks)
+    assert any(b.get("type") == "buttons" for b in blocks)
+
+
+def test_rich_year_selection():
+    years = [{"id": "2025", "text": "2025/2026"}, {"id": "2024", "text": "2024/2025"}]
+    blocks = rf.rich_year_selection(years, "2025")
+    assert any(b.get("type") == "heading" for b in blocks)
+    assert any(b.get("type") == "buttons" for b in blocks)
