@@ -225,54 +225,64 @@ async def get_reply_keyboard(telegram_id: int) -> ReplyKeyboardMarkup | ReplyKey
 def get_unreg_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Регистрация", callback_data="reg")]
+            [InlineKeyboardButton(text="✏️ Войти", callback_data="reg")]
         ]
     )
 
 
-async def send_login_prompt(bot: Bot, chat_id: int):
-    webapp = WebAppInfo(url=WEBAPP_URL)
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Регистрация", web_app=webapp)]],
+def get_login_keyboard() -> ReplyKeyboardMarkup:
+    if WEBAPP_URL:
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="✏️ Войти через WebApp", web_app=WebAppInfo(url=WEBAPP_URL))]],
+            resize_keyboard=True,
+        )
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="/login")]],
         resize_keyboard=True,
     )
-    await bot.send_message(
-        chat_id=chat_id,
-        text="Чтобы зарегистрироваться, нажмите кнопку снизу\\.\nТакже прочтите инструкцию внутри формы\\.",
-        reply_markup=kb,
-        parse_mode="MarkdownV2",
-    )
+
+
+async def send_login_prompt(bot: Bot, chat_id: int):
+    kb = get_login_keyboard()
+    blocks = [
+        {"type": "heading", "text": "🔑 Вход в электронный дневник", "size": 1},
+        {"type": "divider"},
+        {"type": "paragraph", "text": "Для входа нажмите кнопку «✏️ Войти через WebApp» внизу экрана 👇\nВ открывшемся окне следуйте краткой инструкции для получения токенов."},
+        {"type": "divider"},
+        {"type": "buttons", "buttons": [
+            rf._btn_cb("📖 Инструкция и помощь", "help")
+        ]}
+    ]
+    fallback = "Чтобы войти, нажмите кнопку «✏️ Войти через WebApp» внизу экрана."
+    await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
 
 
 async def handle_unauthorized_user(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
-    """Clears expired user tokens from database and sends a clear re-login prompt"""
+    """Clears expired user tokens from database and sends a clear re-login prompt with WebApp keyboard"""
     logger.info(f"Clearing expired tokens for user {user_id} and sending re-login prompt")
     await db.delete_tokens(user_id)
 
+    login_kb = get_login_keyboard()
     blocks = [
         {"type": "heading", "text": "🔒 Сессия истекла", "size": 1},
         {"type": "divider"},
-        {"type": "paragraph", "text": "Срок действия авторизации в электронном дневнике истек. Пожалуйста, выполните повторный вход 👇"},
+        {"type": "paragraph", "text": "Срок действия авторизации в электронном дневнике истек.\n\nНажмите кнопку «✏️ Войти через WebApp» внизу экрана, чтобы повторно войти 👇"},
         {"type": "divider"},
         {"type": "buttons", "buttons": [
-            {"type": "web_app", "text": "✏️ Войти снова (WebApp)", "url": WEBAPP_URL} if WEBAPP_URL else {"type": "callback", "text": "✏️ Войти снова", "callback_data": "reg"}
+            rf._btn_cb("✏️ Войти заново", "reg"),
+            rf._btn_cb("📖 Помощь", "help"),
         ]}
     ]
-    fallback = "🔒 Сессия истекла. Пожалуйста, выполните вход заново (/login)."
-
-    try:
-        await bot.send_message(chat_id=chat_id, text="Сессия завершена.", reply_markup=ReplyKeyboardRemove())
-    except Exception:
-        pass
+    fallback = "🔒 Сессия истекла. Пожалуйста, нажмите «✏️ Войти через WebApp» внизу экрана."
 
     if message_id:
         try:
-            await edit_rich_msg(bot, chat_id, message_id, blocks, fallback)
+            await edit_rich_msg(bot, chat_id, message_id, blocks, fallback, reply_markup=login_kb)
             return
         except Exception:
             pass
 
-    await send_rich_msg(bot, chat_id, blocks, fallback)
+    await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=login_kb)
 
 
 async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
@@ -333,12 +343,13 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     user = await db.get_user(user_id)
     if not user or not user.get("access_token"):
+        login_kb = get_login_keyboard()
         blocks = rf.rich_start(is_registered=False, webapp_url=WEBAPP_URL)
         fallback = (
             "Привет! 👋 Я бот для электронного школьного дневника Свердловской области.\n\n"
-            "Чтобы начать пользоваться ботом, зарегистрируйтесь 👇"
+            "Чтобы начать пользоваться ботом, нажмите «✏️ Войти через WebApp» внизу экрана 👇"
         )
-        await send_rich_msg(message.bot, message.chat.id, blocks, fallback)
+        await send_rich_msg(message.bot, message.chat.id, blocks, fallback, reply_markup=login_kb)
     else:
         client = await get_client(user_id)
         student_name = ""

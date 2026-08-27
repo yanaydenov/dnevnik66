@@ -32,15 +32,13 @@ def rich_start(is_registered: bool = False, student_name: str = "", webapp_url: 
 
     if not is_registered:
         blocks.extend([
-            {"type": "paragraph", "text": "Привет! 👋 Я бот для удобного доступа к школьному электронному дневнику.\n\n✨ Возможности бота:\n• 🗓 Расписание уроков с временем и кабинетами\n• ✍️ Домашние задания со спойлерами и файлами\n• 📊 Четвертные, полугодовые и итоговые оценки\n• 🔔 Расписание звонков и перемен"},
+            {"type": "paragraph", "text": "Привет! 👋 Я бот для удобного доступа к школьному электронному дневнику.\n\n✨ Возможности бота:\n• 🗓 Расписание уроков с временем и кабинетами\n• ✍️ Домашние задания со спойлерами и файлами\n• 📊 Четвертные, полугодовые и итоговые оценки\n• 🔔 Расписание звонков и перемен\n\nДля входа нажмите кнопку «✏️ Войти через WebApp» внизу экрана 👇"},
             {"type": "divider"},
         ])
-        btn_row = []
-        if webapp_url:
-            btn_row.append(_btn_webapp("✏️ Быстрый вход (WebApp)", webapp_url))
-        else:
-            btn_row.append(_btn_cb("✏️ Регистрация", "reg"))
-        btn_row.append(_btn_cb("📄 Список команд", "help"))
+        btn_row = [
+            _btn_cb("✏️ Войти / Регистрация", "reg"),
+            _btn_cb("📖 Список команд", "help"),
+        ]
         blocks.append({"type": "buttons", "buttons": btn_row})
     else:
         name_str = f", {student_name}" if student_name else ""
