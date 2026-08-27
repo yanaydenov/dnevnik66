@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 from datetime import datetime
+import httpx
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -32,6 +33,7 @@ from formatters import (
     format_help_message,
     WEEKDAYS,
 )
+import rich_formatters as rf
 from refresher import run_tokens_refresher_loop
 from webapp_server import run_webapp_server
 
@@ -43,6 +45,97 @@ logging.basicConfig(
 logger = logging.getLogger("dnevnik_bot")
 
 dp = Dispatcher(storage=MemoryStorage())
+
+
+# -------------------------------------------------------------
+# Telegram Rich Messages (Bot API 10.1+) Dispatcher Helpers
+# -------------------------------------------------------------
+
+async def send_rich_msg(
+    bot: Bot,
+    chat_id: int,
+    blocks: list,
+    fallback_text: str,
+    reply_markup: any = None,
+) -> any:
+    """
+    Sends native Telegram Rich Message blocks (Table, Headings, Dividers, Details),
+    automatically falling back to MarkdownV2 message if unsupported.
+    """
+    token = bot.token
+    url = f"https://api.telegram.org/bot{token}/sendRichMessage"
+    payload: dict = {
+        "chat_id": chat_id,
+        "rich_message": {"blocks": blocks}
+    }
+    if reply_markup:
+        if hasattr(reply_markup, "model_dump"):
+            payload["reply_markup"] = reply_markup.model_dump(exclude_none=True)
+        elif hasattr(reply_markup, "to_python"):
+            payload["reply_markup"] = reply_markup.to_python()
+        elif isinstance(reply_markup, dict):
+            payload["reply_markup"] = reply_markup
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp.json()
+            logger.debug(f"sendRichMessage returned {resp.status_code}: {resp.text}. Falling back to standard message.")
+    except Exception as e:
+        logger.debug(f"sendRichMessage request error: {e}. Falling back to standard message.")
+
+    # Fallback to standard message
+    return await bot.send_message(
+        chat_id=chat_id,
+        text=fallback_text,
+        reply_markup=reply_markup,
+        parse_mode="MarkdownV2",
+    )
+
+
+async def edit_rich_msg(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    blocks: list,
+    fallback_text: str,
+    reply_markup: any = None,
+) -> any:
+    """Edits a message with Rich Message blocks, falling back to standard text edit"""
+    token = bot.token
+    url = f"https://api.telegram.org/bot{token}/editMessageText"
+    payload: dict = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": {"blocks": blocks}
+    }
+    if reply_markup:
+        if hasattr(reply_markup, "model_dump"):
+            payload["reply_markup"] = reply_markup.model_dump(exclude_none=True)
+        elif hasattr(reply_markup, "to_python"):
+            payload["reply_markup"] = reply_markup.to_python()
+        elif isinstance(reply_markup, dict):
+            payload["reply_markup"] = reply_markup
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+
+    try:
+        return await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=fallback_text,
+            reply_markup=reply_markup,
+            parse_mode="MarkdownV2",
+        )
+    except Exception:
+        pass
 
 
 # Helper: get client for user with token decryption and auto-save on refresh
@@ -112,18 +205,8 @@ def get_unreg_keyboard() -> InlineKeyboardMarkup:
 
 
 # -------------------------------------------------------------
-# Commands & Handlers
+# Base Command Handlers
 # -------------------------------------------------------------
-
-@dp.message(Command("db"))
-async def show_users_admin(message: Message):
-    if message.from_user.id == ADMIN_TELEGRAM_ID and ADMIN_TELEGRAM_ID != 0:
-        user_ids = await db.get_all_user_ids()
-        res = f"Зарегистрированные пользователи\\: *{len(user_ids)}*\n\n"
-        for i, uid in enumerate(user_ids, 1):
-            res += f"{i}\\. `{uid}`\n"
-        await message.answer(res, parse_mode="MarkdownV2")
-
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -131,22 +214,22 @@ async def cmd_start(message: Message):
     if not user or not user.get("access_token"):
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="📄 Список команд", callback_data="help")],
                 [InlineKeyboardButton(text="✏️ Регистрация", callback_data="reg")],
+                [InlineKeyboardButton(text="📄 Список команд", callback_data="help")],
             ]
         )
         await message.answer(
-            "Здравствуйте! Зарегистрируйтесь, чтобы в дальнейшем пользоваться ботом",
+            "Привет! 👋 Я бот для электронного школьного дневника Свердловской области.\n\n"
+            "Чтобы начать пользоваться ботом, зарегистрируйтесь 👇",
             reply_markup=kb,
         )
     else:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📄 Список команд", callback_data="help")]
-            ]
-        )
         reply_kb = await get_reply_keyboard(message.from_user.id)
-        await message.answer("Вы уже зарегистрированы", reply_markup=reply_kb)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📄 Список команд", callback_data="help")]]
+        )
+        await message.answer("С возвращением! Выберите действие:", reply_markup=reply_kb)
+        await message.answer("Или посмотрите список команд:", reply_markup=kb)
 
 
 @dp.message(Command("login"))
@@ -173,9 +256,13 @@ async def cmd_login(message: Message):
 async def handle_webapp_data(message: Message):
     user_id = message.from_user.id
     try:
-        temp = json.loads(message.web_app_data.data)
-        access_token = temp.get("accessToken", "").strip()
-        refresh_token = temp.get("refreshToken", "").strip()
+        data = json.loads(message.web_app_data.data)
+        access_token = data.get("accessToken", "").strip()
+        refresh_token = data.get("refreshToken", "").strip()
+
+        if not access_token or not refresh_token:
+            await message.answer("Ошибка: не были получены токены. Попробуйте еще раз.")
+            return
 
         client = DnevnikClient(access_token=access_token, refresh_token=refresh_token)
         new_access, new_refresh = await client.refresh_tokens()
@@ -214,12 +301,23 @@ async def handle_webapp_data(message: Message):
 @dp.message(F.text.contains("Список команд"))
 async def cmd_help(message: Message):
     reply_kb = await get_reply_keyboard(message.from_user.id)
-    await message.answer(format_help_message(), reply_markup=reply_kb, parse_mode="MarkdownV2")
+    await send_rich_msg(
+        bot=message.bot,
+        chat_id=message.from_user.id,
+        blocks=rf.rich_help(),
+        fallback_text=format_help_message(),
+        reply_markup=reply_kb,
+    )
 
 
 @dp.message(Command("calls"))
 async def cmd_calls(message: Message):
-    await message.answer(format_calls_message(), parse_mode="MarkdownV2")
+    await send_rich_msg(
+        bot=message.bot,
+        chat_id=message.from_user.id,
+        blocks=rf.rich_calls(),
+        fallback_text=format_calls_message(),
+    )
 
 
 @dp.message(Command("profile"))
@@ -267,18 +365,21 @@ async def cmd_delacc(message: Message):
 async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: int):
     user_id = message_or_query.from_user.id
     client = await get_client(user_id)
-    target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
+    bot = message_or_query.bot
 
     if not client:
+        target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
         await target.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
     try:
         lessons = await client.schedule(day_idx)
-        text = format_schedule_message(day_idx, lessons)
-        await target.answer(text, parse_mode="MarkdownV2")
+        blocks = rf.rich_schedule(day_idx, lessons)
+        fallback = format_schedule_message(day_idx, lessons)
+        await send_rich_msg(bot, user_id, blocks, fallback)
     except Exception as e:
         logger.error(f"Schedule error: {e}")
+        target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
         await target.answer("Не удалось загрузить расписание.")
 
 
@@ -311,7 +412,7 @@ async def cmd_schedule_all(message: Message):
             [InlineKeyboardButton(text="Пятница", callback_data="schedule4"), InlineKeyboardButton(text="Суббота", callback_data="schedule5")],
         ]
     )
-    await message.answer("Выберите день", reply_markup=kb)
+    await message.answer("Выберите день недели:", reply_markup=kb)
 
 
 # -------------------------------------------------------------
@@ -334,7 +435,7 @@ async def cmd_grades(message: Message):
             [InlineKeyboardButton(text="По четвертям", callback_data="ygrades")],
         ]
     )
-    await message.answer("Выберите период", reply_markup=kb)
+    await message.answer("Выберите период:", reply_markup=kb)
 
 
 @dp.message(Command("wgrades"))
@@ -347,8 +448,9 @@ async def cmd_wgrades(message: Message):
 
     try:
         gr = await client.grades_week()
-        text = format_week_grades_message(gr)
-        await message.answer(text, parse_mode="MarkdownV2")
+        blocks = rf.rich_week_grades(gr)
+        fallback = format_week_grades_message(gr)
+        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback)
     except Exception as e:
         logger.error(f"Week grades error: {e}")
         await message.answer("Не удалось получить оценки за неделю.")
@@ -363,9 +465,10 @@ async def cmd_pgrades(message: Message):
 
     try:
         year_grades = await client.grades_year()
-        text = format_year_grades_message(year_grades)
+        blocks = rf.rich_year_grades(year_grades)
+        fallback = format_year_grades_message(year_grades)
         reply_kb = await get_reply_keyboard(message.from_user.id)
-        await message.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=reply_kb)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
         await message.answer("Не удалось получить четвертные оценки.")
@@ -374,19 +477,22 @@ async def cmd_pgrades(message: Message):
 async def send_period_grades(message_or_query: Message | CallbackQuery, period_idx: int):
     user_id = message_or_query.from_user.id
     client = await get_client(user_id)
-    target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
+    bot = message_or_query.bot
 
     if not client:
+        target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
         await target.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
     try:
         disciplines = await client.grades_period(period_idx)
-        text = format_period_grades_message(period_idx + 1, disciplines)
+        blocks = rf.rich_period_grades(period_idx + 1, disciplines)
+        fallback = format_period_grades_message(period_idx + 1, disciplines)
         reply_kb = await get_reply_keyboard(user_id)
-        await target.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+        await send_rich_msg(bot, user_id, blocks, fallback, reply_markup=reply_kb)
     except Exception as e:
         logger.error(f"Period grades error: {e}")
+        target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
         await target.answer("Не удалось получить оценки за четверть.")
 
 
@@ -427,9 +533,10 @@ async def cmd_homework(message: Message):
 
     try:
         hw_data = await client.homework(None)
-        text = format_homework_message(hw_data)
+        blocks = rf.rich_homework(hw_data)
+        fallback = format_homework_message(hw_data)
         kb = build_hw_keyboard(hw_data.get("pages", {}))
-        await message.answer(text, reply_markup=kb, parse_mode="MarkdownV2")
+        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Homework error: {e}")
         await message.answer("Не удалось загрузить домашнее задание.")
@@ -444,6 +551,7 @@ async def handle_callback_query(query: CallbackQuery):
     data = query.data or ""
     user_id = query.from_user.id
     client = await get_client(user_id)
+    bot = query.bot
 
     if data == "reg":
         await cmd_login(query.message)
@@ -451,7 +559,8 @@ async def handle_callback_query(query: CallbackQuery):
         return
 
     if data == "help":
-        await cmd_help(query.message)
+        reply_kb = await get_reply_keyboard(user_id)
+        await send_rich_msg(bot, user_id, rf.rich_help(), format_help_message(), reply_markup=reply_kb)
         await query.answer()
         return
 
@@ -500,8 +609,9 @@ async def handle_callback_query(query: CallbackQuery):
             pass
         try:
             gr = await client.grades_week()
-            text = format_week_grades_message(gr)
-            await query.message.answer(text, parse_mode="MarkdownV2")
+            blocks = rf.rich_week_grades(gr)
+            fallback = format_week_grades_message(gr)
+            await send_rich_msg(bot, user_id, blocks, fallback)
         except Exception as e:
             logger.error(f"Week grades error: {e}")
             await query.message.answer("Не удалось получить оценки за неделю.")
@@ -513,9 +623,10 @@ async def handle_callback_query(query: CallbackQuery):
             pass
         try:
             year_grades = await client.grades_year()
-            text = format_year_grades_message(year_grades)
+            blocks = rf.rich_year_grades(year_grades)
+            fallback = format_year_grades_message(year_grades)
             reply_kb = await get_reply_keyboard(user_id)
-            await query.message.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+            await send_rich_msg(bot, user_id, blocks, fallback, reply_markup=reply_kb)
         except Exception as e:
             logger.error(f"Year grades error: {e}")
             await query.message.answer("Не удалось получить четвертные оценки.")
@@ -529,12 +640,10 @@ async def handle_callback_query(query: CallbackQuery):
         date_str = None if code == "today" else code
         try:
             hw_data = await client.homework(date_str)
-            text = format_homework_message(hw_data)
+            blocks = rf.rich_homework(hw_data)
+            fallback = format_homework_message(hw_data)
             kb = build_hw_keyboard(hw_data.get("pages", {}))
-            try:
-                await query.message.edit_text(text, reply_markup=kb, parse_mode="MarkdownV2")
-            except Exception:
-                pass
+            await edit_rich_msg(bot, user_id, query.message.message_id, blocks, fallback, reply_markup=kb)
         except Exception as e:
             logger.error(f"HW navigation error: {e}")
             await query.answer("Не удалось загрузить ДЗ на эту дату")
@@ -555,38 +664,42 @@ async def set_my_commands(bot: Bot):
         BotCommand(command="all", description="🗓 Расписание на любой день"),
         BotCommand(command="grades", description="📋 Все оценки"),
         BotCommand(command="wgrades", description="📋 Оценки на этой неделе"),
-        BotCommand(command="pgrades", description="📋 Четвертные оценки"),
+        BotCommand(command="pgrades", description="📋 Оценки по четвертям"),
         BotCommand(command="homework", description="✍️ Домашнее задание"),
-        BotCommand(command="profile", description="👤 Профиль ученика"),
         BotCommand(command="calls", description="🔔 Расписание звонков"),
+        BotCommand(command="profile", description="👤 Профиль ученика"),
         BotCommand(command="help", description="📄 Список команд"),
-        BotCommand(command="login", description="✏️ Регистрация"),
-        BotCommand(command="delacc", description="❌ Удалить аккаунт"),
     ]
     try:
         await bot.set_my_commands(commands)
     except Exception as e:
-        logger.warning(f"Could not set commands: {e}")
+        logger.warning(f"Could not set bot commands: {e}")
 
 
 async def main():
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN is not set in environment or .env file!")
+        logger.critical("TELEGRAM_BOT_TOKEN is not set in .env! Please set it and restart.")
         sys.exit(1)
 
+    logger.info("Initializing database...")
     await db.init_db()
 
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await set_my_commands(bot)
 
+    # Start background token refresher loop
     refresher_task = asyncio.create_task(run_tokens_refresher_loop())
 
+    # Start WebApp static server if enabled
     if ENABLE_WEBAPP_SERVER:
-        asyncio.create_task(run_webapp_server(host=WEBAPP_HOST, port=WEBAPP_PORT))
+        try:
+            await run_webapp_server(host=WEBAPP_HOST, port=WEBAPP_PORT)
+        except Exception as e:
+            logger.error(f"Failed to start WebApp server: {e}")
 
-    logger.info("Bot started and polling...")
+    logger.info("Bot started successfully. Polling updates...")
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(bot)
     finally:
         refresher_task.cancel()
         await bot.session.close()
