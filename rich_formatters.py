@@ -32,7 +32,7 @@ def rich_start(is_registered: bool = False, student_name: str = "", webapp_url: 
 
     if not is_registered:
         blocks.extend([
-            {"type": "paragraph", "text": "Привет! 👋 Я бот для удобного доступа к школьному электронному дневнику.\n\n✨ <b>Возможности бота:</b>\n• 🗓 Расписание уроков с временем и кабинетами\n• ✍️ Домашние задания со спойлерами и файлами\n• 📊 Четвертные, полугодовые и итоговые оценки\n• 🔔 Расписание звонков и перемен"},
+            {"type": "paragraph", "text": "Привет! 👋 Я бот для удобного доступа к школьному электронному дневнику.\n\n✨ Возможности бота:\n• 🗓 Расписание уроков с временем и кабинетами\n• ✍️ Домашние задания со спойлерами и файлами\n• 📊 Четвертные, полугодовые и итоговые оценки\n• 🔔 Расписание звонков и перемен"},
             {"type": "divider"},
         ])
         btn_row = []
@@ -43,7 +43,7 @@ def rich_start(is_registered: bool = False, student_name: str = "", webapp_url: 
         btn_row.append(_btn_cb("📄 Список команд", "help"))
         blocks.append({"type": "buttons", "buttons": btn_row})
     else:
-        name_str = f", <b>{student_name}</b>" if student_name else ""
+        name_str = f", {student_name}" if student_name else ""
         blocks.extend([
             {"type": "paragraph", "text": f"С возвращением{name_str}! 👋\nВыберите нужный раздел или воспользуйтесь быстрыми кнопками:"},
             {"type": "divider"},
@@ -420,7 +420,7 @@ def rich_grades_menu(study_periods: List[Dict[str, Any]], is_semester: bool, sch
     blocks: List[Dict[str, Any]] = [
         {"type": "heading", "text": "📊 Оценки ученика", "size": 1},
         {"type": "divider"},
-        {"type": "paragraph", "text": f"📅 Учебный год: <b>{school_year}</b>\n🏫 Система обучения: <b>{sys_type}</b>\n\nВыберите период для просмотра оценок:"},
+        {"type": "paragraph", "text": f"📅 Учебный год: {school_year}\n🏫 Система обучения: {sys_type}\n\nВыберите период для просмотра оценок:"},
         {"type": "divider"},
         {"type": "buttons", "buttons": [
             _btn_cb("📋 Оценки на этой неделе", "wgrades")
@@ -513,7 +513,7 @@ def rich_year_selection(years: List[Dict[str, str]], active_year: str) -> List[D
     blocks: List[Dict[str, Any]] = [
         {"type": "heading", "text": "🗓 Выбор учебного года", "size": 1},
         {"type": "divider"},
-        {"type": "paragraph", "text": f"📅 Текущий активный год: <b>{active_year or 'не задан'}</b>\n\nВыберите учебный год для работы бота (расписание, оценки, ДЗ):"},
+        {"type": "paragraph", "text": f"📅 Текущий активный год: {active_year or 'не задан'}\n\nВыберите учебный год для работы бота (расписание, оценки, ДЗ):"},
         {"type": "divider"},
     ]
 

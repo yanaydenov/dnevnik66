@@ -721,13 +721,20 @@ async def handle_callback_query(query: CallbackQuery):
                 pass
 
             reply_kb = await get_reply_keyboard(user_id)
-            cls_info = f" (класс: {meta.get('className')})" if meta.get('className') else ""
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ Учебный год успешно переключен на <b>{chosen_year}</b>{cls_info}.\nТеперь расписание, оценки и ДЗ отображаются для этого года.",
-                reply_markup=reply_kb,
-                parse_mode="HTML",
-            )
+            cls_info = f" • класс {meta.get('className')}" if meta.get('className') else ""
+            blocks = [
+                {"type": "heading", "text": "✅ Учебный год переключен", "size": 1},
+                {"type": "divider"},
+                {"type": "paragraph", "text": f"Активный учебный год: {chosen_year}{cls_info}\nТеперь расписание, оценки и домашние задания отображаются для этого года."},
+                {"type": "divider"},
+                {"type": "buttons", "buttons": [
+                    {"type": "callback", "text": "🗓 Расписание", "callback_data": "schedule0"},
+                    {"type": "callback", "text": "📋 Оценки", "callback_data": "grades_menu"},
+                    {"type": "callback", "text": "✍️ ДЗ", "callback_data": "hw_quick"},
+                ]}
+            ]
+            fallback = f"✅ Учебный год переключен на {chosen_year}{cls_info}."
+            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=reply_kb)
 
     elif data == "back_to_grades":
         await send_grades_menu(bot, user_id, chat_id, message_id=query.message.message_id)
