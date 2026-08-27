@@ -308,8 +308,12 @@ class DnevnikClient:
     async def grades_period(self, period_idx: int) -> List[Dict[str, Any]]:
         """Returns grades list for a quarter/period (0=1st quarter, 1=2nd quarter, ...)"""
         await self.init_ids()
-        # Period index offset: periods_ids[0] is current week, [1] is year, [2..5] are quarters 1..4
-        target_period_id = self.periods_ids[period_idx + 2] if (period_idx + 2) < len(self.periods_ids) else self.periods_ids[-1]
+        if len(self.periods_ids) >= 6:
+            target_period_id = self.periods_ids[period_idx + 2] if (period_idx + 2) < len(self.periods_ids) else self.periods_ids[-1]
+        elif len(self.periods_ids) > 0:
+            target_period_id = self.periods_ids[period_idx] if period_idx < len(self.periods_ids) else self.periods_ids[-1]
+        else:
+            return []
 
         data = await self._request("GET", "/estimate", params={
             "schoolYear": self.school_year,

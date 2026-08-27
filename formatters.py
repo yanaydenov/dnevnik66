@@ -134,7 +134,7 @@ def format_period_grades_message(period_num: int, disciplines: List[Dict[str, An
         avg = round(float(d.get("average", 0.0) or 0.0), 2)
         avg_w = round(float(d.get("averagew", 0.0) or 0.0), 2)
 
-        res += f"📖 *{esc_md(d.get('name', ''))}* • ср: *{esc_md(avg)}* _\\(взвеш: {esc_md(avg_w)}\\)\n"
+        res += f"📖 *{esc_md(d.get('name', ''))}* • ср: *{esc_md(avg)}* _\\(взвеш: {esc_md(avg_w)}\\)_ \n"
         res += f"└ {grades_str}\n\n"
 
     if not has_grades:
