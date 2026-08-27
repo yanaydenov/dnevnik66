@@ -17,6 +17,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     WebAppInfo,
     BotCommand,
+    BufferedInputFile,
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -44,6 +45,7 @@ from formatters import (
 )
 import rich_formatters as rf
 from refresher import run_tokens_refresher_loop
+from notifier import run_grade_notifier_loop
 from webapp_server import run_webapp_server
 
 logging.basicConfig(
@@ -415,8 +417,9 @@ async def cmd_profile(message: Message):
         meta = (user or {}).get("meta", {})
         active_year = meta.get("school_year") or client.school_year or "текущий"
         is_sem = client.is_semester_system()
+        notify_enabled = meta.get("notify_enabled", True)
 
-        blocks = rf.rich_profile(p, active_year, is_sem)
+        blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=notify_enabled)
         fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')} ({p.get('className', '')})\n🏫 {p.get('orgName', '')}\n📅 Год: {active_year}"
         await send_rich_msg(message.bot, message.chat.id, blocks, fallback)
     except Exception as e:
@@ -457,9 +460,9 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
         return
 
     try:
-        lessons = await client.schedule(day_idx)
-        blocks = rf.rich_schedule(day_idx, lessons)
-        fallback = format_schedule_message(day_idx, lessons)
+        schedule_data = await client.schedule(day_idx)
+        blocks = rf.rich_schedule(day_idx, schedule_data)
+        fallback = format_schedule_message(day_idx, schedule_data)
 
         if edit_in_place and isinstance(message_or_query, CallbackQuery):
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback)
@@ -659,11 +662,35 @@ async def handle_callback_query(query: CallbackQuery):
                 meta = (user or {}).get("meta", {})
                 active_year = meta.get("school_year") or client.school_year or "текущий"
                 is_sem = client.is_semester_system()
-                blocks = rf.rich_profile(p, active_year, is_sem)
+                notify_enabled = meta.get("notify_enabled", True)
+                blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=notify_enabled)
                 fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
                 await send_rich_msg(bot, chat_id, blocks, fallback)
             except Exception as e:
                 logger.error(f"Profile error: {e}")
+        await query.answer()
+        return
+
+    if data == "toggle_notify":
+        user = await db.get_user(user_id)
+        if user and client:
+            try:
+                meta = user.get("meta", {})
+                current_state = meta.get("notify_enabled", True)
+                meta["notify_enabled"] = not current_state
+                await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
+                status_text = "включены" if meta["notify_enabled"] else "отключены"
+                await query.answer(f"🔔 Уведомления {status_text}!")
+
+                await client.init_ids()
+                p = await client.profile()
+                active_year = meta.get("school_year") or client.school_year or "текущий"
+                is_sem = client.is_semester_system()
+                blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=meta["notify_enabled"])
+                fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
+                await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
+            except Exception as e:
+                logger.error(f"Toggle notify error: {e}")
         await query.answer()
         return
 
@@ -790,6 +817,17 @@ async def handle_callback_query(query: CallbackQuery):
     elif data == "ygrades":
         await send_year_grades(query, edit_in_place=True)
 
+    elif data.startswith("dlfile_"):
+        file_id = data.split("_", 1)[1]
+        await query.answer("⏳ Скачиваю файл...", show_alert=False)
+        try:
+            content, filename = await client.download_file(file_id)
+            doc = BufferedInputFile(content, filename=filename or "homework_file")
+            await bot.send_document(chat_id=chat_id, document=doc, caption=f"📎 {filename}")
+        except Exception as e:
+            logger.error(f"Download file error: {e}")
+            await bot.send_message(chat_id=chat_id, text="Не удалось скачать файл. Возможно, срок его действия истек.")
+
     elif data.startswith("hw"):
         code = data[2:]
         if code == "noop":
@@ -849,6 +887,9 @@ async def main():
     # Start background token refresher loop
     refresher_task = asyncio.create_task(run_tokens_refresher_loop())
 
+    # Start background smart grade notifier loop (checks every 40 mins during daytime)
+    notifier_task = asyncio.create_task(run_grade_notifier_loop(bot))
+
     # Start WebApp static server if enabled
     if ENABLE_WEBAPP_SERVER:
         try:
@@ -861,6 +902,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         refresher_task.cancel()
+        notifier_task.cancel()
         await bot.session.close()
 
 

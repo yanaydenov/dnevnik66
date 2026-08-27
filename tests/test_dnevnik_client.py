@@ -75,3 +75,48 @@ async def test_semester_system_detection():
     study_periods = client.get_study_periods()
     assert len(study_periods) == 2
     assert study_periods[0]["name"] == "1 Полугодие"
+
+
+@pytest.mark.asyncio
+async def test_schedule_returns_date_and_lessons():
+    client = DnevnikClient(access_token="test", refresh_token="refresh")
+    client.student_id = "s1"
+    client._request = AsyncMock(return_value={
+        "scheduleModel": {
+            "days": [
+                {
+                    "date": "2025-05-12",
+                    "scheduleDayLessonModels": [
+                        {"lessonName": "Алгебра", "number": 1, "room": "204"}
+                    ]
+                }
+            ]
+        }
+    })
+    res = await client.schedule(0)
+    assert res["date"] == "2025-05-12"
+    assert len(res["lessons"]) == 1
+    assert res["lessons"][0]["name"] == "Алгебра"
+
+
+@pytest.mark.asyncio
+async def test_homework_structured_files():
+    client = DnevnikClient(access_token="test", refresh_token="refresh")
+    client.student_id = "s1"
+    client._request = AsyncMock(return_value={
+        "date": "2025-05-12",
+        "homeworks": [
+            {
+                "lessonName": "Физика",
+                "description": "Параграф 10",
+                "homeWorkFiles": [
+                    {"id": "file-123", "fileName": "zadanie.pdf", "fileSize": 1024}
+                ]
+            }
+        ]
+    })
+    res = await client.homework("2025-05-12")
+    assert res["date"] == "2025-05-12"
+    assert len(res["homework"]) == 1
+    assert res["homework"][0]["filesCount"] == 1
+    assert res["homework"][0]["files"][0]["id"] == "file-123"

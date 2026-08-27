@@ -274,8 +274,8 @@ class DnevnikClient:
     async def get_students(self) -> Dict[str, Any]:
         return await self._request("GET", "/students")
 
-    async def schedule(self, day_idx: int, date_str: Optional[str] = None) -> List[Dict[str, str]]:
-        """Returns list of lessons for the given day index (0=Monday..5=Saturday)"""
+    async def schedule(self, day_idx: int, date_str: Optional[str] = None) -> Dict[str, Any]:
+        """Returns dict with date and list of lessons for the given day index (0=Monday..5=Saturday)"""
         await self.init_student_id()
         params = {"studentId": self.student_id}
         if date_str:
@@ -283,22 +283,25 @@ class DnevnikClient:
 
         data = await self._request("GET", "/schedule", params=params)
         if not isinstance(data, dict):
-            return []
+            return {"day_idx": day_idx, "date": "", "lessons": []}
 
         schedule_model = data.get("scheduleModel") or {}
         days = schedule_model.get("days") or []
 
         # If current week has 0 lessons (e.g. during summer vacation) and no date was explicitly forced, fallback to test week
         total_lessons = sum(len(d.get("scheduleDayLessonModels") or []) for d in days if isinstance(d, dict))
+        is_test_fallback = False
         if total_lessons == 0 and not date_str and TEST_SCHEDULE_DATE:
             params["date"] = TEST_SCHEDULE_DATE
             fallback_data = await self._request("GET", "/schedule", params=params)
             if isinstance(fallback_data, dict):
                 schedule_model = fallback_data.get("scheduleModel") or {}
                 days = schedule_model.get("days") or []
+                is_test_fallback = True
 
         if day_idx < len(days):
             target_day = days[day_idx] or {}
+            day_date = target_day.get("date") or target_day.get("dayDate") or ""
             lesson_models = target_day.get("scheduleDayLessonModels") or []
             result = []
             for num, l in enumerate(lesson_models, 1):
@@ -313,8 +316,13 @@ class DnevnikClient:
                     "endHour": l.get("endHour"),
                     "endMinute": l.get("endMinute"),
                 })
-            return result
-        return []
+            return {
+                "day_idx": day_idx,
+                "date": day_date,
+                "is_test_fallback": is_test_fallback,
+                "lessons": result
+            }
+        return {"day_idx": day_idx, "date": "", "is_test_fallback": False, "lessons": []}
 
     async def schedule_raw(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         await self.init_student_id()
@@ -325,7 +333,7 @@ class DnevnikClient:
         return res if isinstance(res, dict) else {}
 
     async def homework(self, date_str: Optional[str] = None) -> Dict[str, Any]:
-        """Returns homework data for a date with pagination links"""
+        """Returns homework data for a date with pagination links and structured attachment files"""
         await self.init_student_id()
         params = {"studentId": self.student_id}
         if date_str:
@@ -343,15 +351,68 @@ class DnevnikClient:
         for item in (hw.get("homeworks") or []):
             if not isinstance(item, dict):
                 continue
-            files = item.get("homeWorkFiles") or []
+            raw_files = item.get("homeWorkFiles") or []
+            files_list = []
+            for f in raw_files:
+                if isinstance(f, dict):
+                    files_list.append({
+                        "id": str(f.get("id") or f.get("fileId") or ""),
+                        "name": str(f.get("fileName") or f.get("name") or "Файл задания"),
+                        "size": f.get("fileSize") or f.get("size") or 0,
+                        "url": str(f.get("fileUrl") or f.get("url") or ""),
+                    })
+                elif isinstance(f, str):
+                    files_list.append({"id": f, "name": "Файл задания", "size": 0, "url": ""})
+
             result["homework"].append({
                 "lessonName": item.get("lessonName") or "",
                 "description": item.get("description") or "Нет задания",
-                "filesCount": len(files),
-                "files": files,
+                "filesCount": len(files_list),
+                "files": files_list,
                 "isDone": item.get("isDone", False),
             })
         return result
+
+    async def download_file(self, file_id: str, file_url: Optional[str] = None) -> tuple[bytes, str]:
+        """Downloads a homework attachment from Dnevnik API"""
+        await self.init_student_id()
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+
+        # 1. Direct URL if provided
+        if file_url and file_url.startswith("http"):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(file_url, headers=headers)
+                    if resp.status_code == 200 and resp.content:
+                        filename = "homework_file"
+                        cd = resp.headers.get("content-disposition", "")
+                        if "filename=" in cd:
+                            filename = cd.split("filename=")[-1].strip('"\'; ')
+                        return resp.content, filename
+            except Exception:
+                pass
+
+        # 2. Query download endpoints
+        candidates = [
+            f"{self.api_url}/homework/file?fileId={file_id}",
+            f"{self.api_url}/homework/files/{file_id}",
+            f"{self.api_url}/files/{file_id}",
+            f"{self.api_url}/file/{file_id}",
+        ]
+        for url in candidates:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 200 and resp.content:
+                        filename = "homework_file"
+                        cd = resp.headers.get("content-disposition", "")
+                        if "filename=" in cd:
+                            filename = cd.split("filename=")[-1].strip('"\'; ')
+                        return resp.content, filename
+            except Exception:
+                pass
+
+        raise RuntimeError("Не удалось скачать файл")
 
     async def grades_week(self, school_year: Optional[str] = None) -> Dict[str, List[List[Any]]]:
         """Returns dict of discipline -> list of grade arrays for the current week"""

@@ -86,14 +86,33 @@ def format_homework_message(hw: Dict[str, Any]) -> str:
     return res
 
 
-def format_schedule_message(day_idx: int, lessons: List[Dict[str, Any]]) -> str:
-    """Formats schedule with numbered badges, times and room indicators"""
-    res = f"🗓 *{esc_md(WEEKDAYS[day_idx])}*\n\n"
-    if day_idx == 6 or not lessons:
+def format_schedule_message(
+    day_idx: int,
+    lessons: Union[List[Dict[str, Any]], Dict[str, Any]],
+    day_date: Optional[str] = None
+) -> str:
+    """Formats schedule with numbered badges, times, room indicators, and dates"""
+    lessons_list: List[Dict[str, Any]] = []
+    if isinstance(lessons, dict):
+        lessons_list = lessons.get("lessons") or []
+        day_date = lessons.get("date") or day_date
+    elif isinstance(lessons, list):
+        lessons_list = lessons
+
+    date_title = ""
+    if day_date:
+        try:
+            parts = [int(p) for p in day_date.split("-")]
+            date_title = f" • {parts[2]:02d}\\.{parts[1]:02d}\\.{parts[0]}"
+        except Exception:
+            date_title = f" • {esc_md(day_date)}"
+
+    res = f"🗓 *{esc_md(WEEKDAYS[day_idx])}{date_title}*\n\n"
+    if day_idx == 6 or not lessons_list:
         res += "🛋 _В этот день уроков нет_"
         return res
 
-    for idx, l in enumerate(lessons):
+    for idx, l in enumerate(lessons_list):
         num_str = l.get("num", str(idx + 1))
         name = l.get("name", "")
         room = l.get("room", "")

@@ -103,3 +103,25 @@ def test_rich_year_selection():
     blocks = rf.rich_year_selection(years, "2025")
     assert any(b.get("type") == "heading" for b in blocks)
     assert any(b.get("type") == "buttons" for b in blocks)
+
+
+def test_rich_schedule_with_dict_and_date():
+    sched = {
+        "day_idx": 0,
+        "date": "2025-05-12",
+        "lessons": [
+            {"num": 1, "name": "Алгебра", "room": "204", "beginHour": 8, "beginMinute": 30, "endHour": 9, "endMinute": 10}
+        ]
+    }
+    blocks = rf.rich_schedule(0, sched)
+    assert any(b.get("type") == "heading" and "12.05.2025" in b.get("text", "") for b in blocks)
+    assert any(b.get("type") == "table" for b in blocks)
+
+
+def test_rich_new_grades_notification():
+    new_grades = [
+        {"subject": "Химия", "grade": "5", "average": 4.5}
+    ]
+    blocks = rf.rich_new_grades_notification(new_grades)
+    assert any(b.get("type") == "heading" and "Новые оценки" in b.get("text", "") for b in blocks)
+    assert any(b.get("type") == "table" for b in blocks)

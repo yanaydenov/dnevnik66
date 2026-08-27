@@ -34,3 +34,7 @@ REFRESH_BEFORE_SEC = int(os.getenv("REFRESH_BEFORE_SEC", "600"))
 DNEVNIK_API_URL = os.getenv("DNEVNIK_API_URL", "https://dnevnik.egov66.ru/api").rstrip("/")
 SCHOOL_YEAR = os.getenv("SCHOOL_YEAR", os.getenv("FORCE_SCHOOL_YEAR", "")).strip()
 TEST_SCHEDULE_DATE = os.getenv("TEST_SCHEDULE_DATE", "2025-05-12").strip()
+
+# Настройки уведомлений о новых оценках
+NOTIFY_INTERVAL_SEC = int(os.getenv("NOTIFY_INTERVAL_SEC", "2400"))  # 40 минут по умолчанию
+NOTIFY_ENABLED = os.getenv("NOTIFY_ENABLED", "true").lower() in ("true", "1", "yes")

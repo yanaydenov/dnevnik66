@@ -66,25 +66,50 @@ def rich_start(is_registered: bool = False, student_name: str = "", webapp_url: 
 
 
 # -------------------------------------------------------------
-# Rich Schedule with In-Message Day Buttons
+# Rich Schedule with In-Message Day Buttons & Dates
 # -------------------------------------------------------------
 
-def rich_schedule(day_idx: int, lessons: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Generates Telegram Rich Message blocks with native Table and in-message day buttons"""
+def rich_schedule(
+    day_idx: int,
+    lessons: Union[List[Dict[str, Any]], Dict[str, Any]],
+    day_date: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Generates Telegram Rich Message blocks with native Table, exact dates, and day switcher buttons"""
+    lessons_list: List[Dict[str, Any]] = []
+    is_test_fallback = False
+
+    if isinstance(lessons, dict):
+        lessons_list = lessons.get("lessons") or []
+        day_date = lessons.get("date") or day_date
+        is_test_fallback = lessons.get("is_test_fallback", False)
+    elif isinstance(lessons, list):
+        lessons_list = lessons
+
     weekday = WEEKDAYS[day_idx] if 0 <= day_idx < len(WEEKDAYS) else "Расписание"
 
+    date_title = ""
+    dt_obj = None
+    if day_date:
+        try:
+            parts = [int(p) for p in day_date.split("-")]
+            dt_obj = datetime(parts[0], parts[1], parts[2])
+            date_title = f" • {parts[2]:02d}.{parts[1]:02d}.{parts[0]}"
+        except Exception:
+            date_title = f" • {day_date}"
+
+    heading_text = f"🗓 {weekday}{date_title}"
     blocks: List[Dict[str, Any]] = [
-        {"type": "heading", "text": f"🗓 {weekday}", "size": 1},
+        {"type": "heading", "text": heading_text, "size": 1},
         {"type": "divider"},
     ]
 
-    if day_idx == 6 or not lessons:
+    if day_idx == 6 or not lessons_list:
         blocks.append({"type": "paragraph", "text": "🛋 В этот день уроков нет"})
     else:
         table_cells: List[List[Dict[str, str]]] = [
             [_cell("№"), _cell("Время"), _cell("Предмет"), _cell("Каб.")]
         ]
-        for idx, l in enumerate(lessons):
+        for idx, l in enumerate(lessons_list):
             num = str(l.get("num") or (idx + 1))
             name = str(l.get("name") or "")
             room = str(l.get("room") or "—")
@@ -103,15 +128,29 @@ def rich_schedule(day_idx: int, lessons: List[Dict[str, Any]]) -> List[Dict[str,
             "cells": table_cells,
         })
 
-    # Embedded in-message day switcher buttons
+    # Embedded in-message day switcher buttons with dates
     days_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
     day_btns = []
+    monday_dt = None
+    if dt_obj:
+        from datetime import timedelta
+        monday_dt = dt_obj - timedelta(days=day_idx)
+
     for idx, name in enumerate(days_short):
-        label = f"• {name} •" if idx == day_idx else name
-        day_btns.append(_btn_cb(label, f"schedule{idx}"))
+        if monday_dt:
+            from datetime import timedelta
+            cur_dt = monday_dt + timedelta(days=idx)
+            label = f"{name} {cur_dt.day:02d}.{cur_dt.month:02d}"
+        else:
+            label = name
+
+        text = f"• {label} •" if idx == day_idx else label
+        day_btns.append(_btn_cb(text, f"schedule{idx}"))
 
     blocks.append({"type": "divider"})
-    blocks.append({"type": "buttons", "buttons": day_btns})
+    # Split day buttons into 2 rows of 3 buttons for optimal readability
+    blocks.append({"type": "buttons", "buttons": day_btns[:3]})
+    blocks.append({"type": "buttons", "buttons": day_btns[3:]})
     blocks.append({"type": "buttons", "buttons": [
         _btn_cb("🔔 Звонки", "calls_quick"),
         _btn_cb("📋 Оценки", "grades_menu"),
@@ -122,11 +161,11 @@ def rich_schedule(day_idx: int, lessons: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 # -------------------------------------------------------------
-# Rich Homework with In-Message Pagination Buttons
+# Rich Homework with Attachment Download Buttons
 # -------------------------------------------------------------
 
 def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Generates Telegram Rich Message blocks with native Details/Accordions and pagination buttons"""
+    """Generates Telegram Rich Message blocks with native Details/Accordions and file download buttons"""
     date_raw = hw.get("date", "0001-01-01")
     try:
         parts = [int(i) for i in date_raw.split("-")]
@@ -141,6 +180,8 @@ def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
     ]
 
     homework_list = hw.get("homework", [])
+    all_files = []
+
     if not homework_list:
         blocks.append({"type": "paragraph", "text": "✨ На этот день домашних заданий нет"})
     else:
@@ -149,6 +190,9 @@ def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
             desc = (item.get("description") or "").strip() or "Нет описания задания"
             files = item.get("files", [])
             files_count = len(files) if files else item.get("filesCount", 0)
+
+            for f in files:
+                all_files.append(f)
 
             files_str = f" (📎 {files_count} {format_file_plural(files_count)})" if files_count > 0 else ""
             title_str = f"📖 {name}{files_str}"
@@ -160,6 +204,20 @@ def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
                     {"type": "paragraph", "text": desc}
                 ]
             })
+
+    # Add file download buttons if there are attachments
+    if all_files:
+        blocks.append({"type": "divider"})
+        file_btns = []
+        for f in all_files[:6]:  # Show up to 6 direct download buttons
+            f_name = f.get("name", "Файл")
+            f_id = f.get("id", "")
+            if f_id:
+                file_btns.append(_btn_cb(f"📥 {f_name[:20]}", f"dlfile_{f_id}"))
+        if file_btns:
+            # 2 files per row
+            for i in range(0, len(file_btns), 2):
+                blocks.append({"type": "buttons", "buttons": file_btns[i:i + 2]})
 
     pagination = hw.get("pages", {})
     prev_date = pagination.get("previousDate")
@@ -464,8 +522,13 @@ def rich_grades_menu(study_periods: List[Dict[str, Any]], is_semester: bool, sch
 # Rich Profile Screen
 # -------------------------------------------------------------
 
-def rich_profile(p: Dict[str, Any], school_year: str, is_semester: bool) -> List[Dict[str, Any]]:
-    """Generates rich profile card with details and action buttons"""
+def rich_profile(
+    p: Dict[str, Any],
+    school_year: str,
+    is_semester: bool,
+    notify_enabled: bool = True,
+) -> List[Dict[str, Any]]:
+    """Generates rich profile card with details, notification toggle, and action buttons"""
     last_name = p.get("lastName", "")
     first_name = p.get("firstName", "")
     sur_name = p.get("surName", "")
@@ -473,6 +536,7 @@ def rich_profile(p: Dict[str, Any], school_year: str, is_semester: bool) -> List
     org_name = p.get("orgName", "Школа")
     class_name = p.get("className", "") or "—"
     sys_type = "Полугодия" if is_semester else "Четверти"
+    notify_status = "Включены (каждые 40 мин)" if notify_enabled else "Отключены"
 
     return [
         {"type": "heading", "text": "👤 Профиль ученика", "size": 1},
@@ -487,21 +551,59 @@ def rich_profile(p: Dict[str, Any], school_year: str, is_semester: bool) -> List
                 [_cell("Класс"), _cell(class_name)],
                 [_cell("Учебный год"), _cell(school_year)],
                 [_cell("Система"), _cell(sys_type)],
+                [_cell("Оценки"), _cell(notify_status)],
             ]
         },
         {"type": "divider"},
         {"type": "buttons", "buttons": [
-            _btn_cb("🗓 Сменить учебный год", "select_year"),
-            _btn_cb("🔔 Расписание звонков", "calls_quick"),
+            _btn_cb(f"🔔 Уведомления: {'Вкл ✅' if notify_enabled else 'Выкл ❌'}", "toggle_notify"),
+            _btn_cb("🗓 Сменить год", "select_year"),
         ]},
         {"type": "buttons", "buttons": [
             _btn_cb("📋 Все оценки", "grades_menu"),
             _btn_cb("✍️ Домашние задания", "hw_quick"),
         ]},
         {"type": "buttons", "buttons": [
+            _btn_cb("🔔 Расписание звонков", "calls_quick"),
             _btn_cb("🗑 Удалить аккаунт", "deleteacc_prompt"),
         ]}
     ]
+
+
+def rich_new_grades_notification(new_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Generates Telegram Rich Message for newly received grades notification"""
+    blocks: List[Dict[str, Any]] = [
+        {"type": "heading", "text": "⚡️ Новые оценки в электронном дневнике!", "size": 1},
+        {"type": "divider"},
+    ]
+
+    table_cells: List[List[Dict[str, str]]] = [
+        [_cell("Предмет"), _cell("Новая оценка"), _cell("Ср. балл")]
+    ]
+
+    for item in new_items:
+        subj = item.get("subject", "Предмет")
+        new_g = item.get("grade", "")
+        avg = str(round(float(item.get("average", 0.0) or 0.0), 2))
+        table_cells.append([
+            _cell(subj),
+            _cell(new_g),
+            _cell(avg),
+        ])
+
+    blocks.append({
+        "type": "table",
+        "is_compact": True,
+        "cells": table_cells,
+    })
+
+    blocks.append({"type": "divider"})
+    blocks.append({"type": "buttons", "buttons": [
+        _btn_cb("📋 Все оценки", "grades_menu"),
+        _btn_cb("🗓 Расписание", "schedule0"),
+    ]})
+
+    return blocks
 
 
 # -------------------------------------------------------------
