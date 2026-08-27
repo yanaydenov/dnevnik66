@@ -111,7 +111,7 @@ async def edit_rich_msg(
     fallback_text: str,
     reply_markup: any = None,
 ) -> any:
-    """Edits a message with Rich Message blocks, falling back to standard text edit"""
+    """Edits a message with Rich Message blocks, falling back to standard text edit or fresh send"""
     token = bot.token
     url = f"https://api.telegram.org/bot{token}/editMessageText"
     payload: dict = {
@@ -132,8 +132,13 @@ async def edit_rich_msg(
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return resp.json()
-    except Exception:
-        pass
+            resp_data = resp.json() if "application/json" in resp.headers.get("content-type", "") else {}
+            desc = resp_data.get("description", resp.text)
+            if "message is not modified" in desc.lower():
+                return resp_data
+            logger.debug(f"editRichMessageText returned {resp.status_code}: {desc}")
+    except Exception as e:
+        logger.debug(f"editRichMessageText request error: {e}")
 
     try:
         return await bot.edit_message_text(
@@ -143,8 +148,14 @@ async def edit_rich_msg(
             reply_markup=reply_markup,
             parse_mode="MarkdownV2",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        if "message is not modified" in str(e).lower():
+            return None
+        logger.debug(f"edit_message_text fallback failed: {e}. Sending fresh message.")
+        try:
+            return await send_rich_msg(bot, chat_id, blocks, fallback_text, reply_markup=reply_markup)
+        except Exception:
+            pass
 
 
 # Helper: get client for user with token decryption and auto-save on refresh
