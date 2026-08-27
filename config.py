@@ -32,3 +32,4 @@ if not SECRET_KEY:
 REFRESH_INTERVAL_SEC = int(os.getenv("REFRESH_INTERVAL_SEC", "60"))
 REFRESH_BEFORE_SEC = int(os.getenv("REFRESH_BEFORE_SEC", "600"))
 DNEVNIK_API_URL = os.getenv("DNEVNIK_API_URL", "https://dnevnik.egov66.ru/api").rstrip("/")
+SCHOOL_YEAR = os.getenv("SCHOOL_YEAR", os.getenv("FORCE_SCHOOL_YEAR", "")).strip()

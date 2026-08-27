@@ -26,7 +26,8 @@ class DnevnikClient:
     def __init__(
         self,
         access_token: str,
-        refresh_token: str,
+        refresh_token: str = "",
+        school_year: Optional[str] = None,
         base_url: str = DNEVNIK_API_URL,
         on_token_refreshed: Optional[Callable[[str, str], Any]] = None,
     ):
@@ -36,7 +37,7 @@ class DnevnikClient:
         self.on_token_refreshed = on_token_refreshed
         self.student_id: Optional[str] = None
         self.class_id: Optional[str] = None
-        self.school_year: Optional[str] = None
+        self.school_year: Optional[str] = str(school_year).strip() if school_year else None
         self.periods_ids: List[str] = []
         self._cached_profile: Optional[Dict[str, Any]] = None
 
@@ -132,25 +133,56 @@ class DnevnikClient:
         self.student_id = student["id"]
         self._cached_profile = student
 
-    async def init_ids(self) -> None:
+    async def get_school_years(self) -> List[Dict[str, str]]:
+        """Returns list of available school years, e.g. [{'id': '2025', 'text': '2025/2026'}, {'id': '2024', 'text': '2024/2025'}]"""
+        await self.init_student_id()
+        try:
+            res = await self._request("GET", "/estimate/years", params={"studentId": self.student_id})
+            if isinstance(res, dict):
+                years = res.get("schoolYears") or res.get("years") or []
+                if years:
+                    return [{"id": str(y["id"]), "text": y.get("text", str(y["id"]))} for y in years if isinstance(y, dict) and "id" in y]
+        except Exception as e:
+            logger.warning(f"Could not fetch school years: {e}")
+        return [{"id": "2025", "text": "2025/2026"}, {"id": "2024", "text": "2024/2025"}]
+
+    async def init_ids(self, forced_year: Optional[str] = None) -> None:
         """Initializes studentId, classId, schoolYear, and periodsIds with fallback support"""
         await self.init_student_id()
 
-        if self.class_id and self.periods_ids and self.school_year:
+        target_year = str(forced_year or self.school_year or "").strip()
+        if not target_year:
+            from config import SCHOOL_YEAR
+            if SCHOOL_YEAR:
+                target_year = str(SCHOOL_YEAR).strip()
+
+        if self.class_id and self.periods_ids and self.school_year and (not target_year or self.school_year == target_year):
             return
 
-        # 1. Fetch available school years
+        # If a specific year was requested, reset class and periods to fetch for that year
+        if target_year and target_year != self.school_year:
+            self.class_id = None
+            self.periods_ids = []
+
         candidate_years: List[str] = []
+        if target_year:
+            candidate_years.append(target_year)
+
+        # 1. Fetch available school years
         try:
             years_res = await self._request("GET", "/estimate/years", params={"studentId": self.student_id})
             if isinstance(years_res, dict):
                 curr = years_res.get("currentYear")
                 if isinstance(curr, dict) and curr.get("id"):
-                    candidate_years.append(str(curr["id"]))
+                    y_id = str(curr["id"])
+                    if y_id not in candidate_years:
+                        candidate_years.append(y_id)
                 elif isinstance(curr, (str, int)):
-                    candidate_years.append(str(curr))
+                    y_id = str(curr)
+                    if y_id not in candidate_years:
+                        candidate_years.append(y_id)
 
-                for y in years_res.get("years", []):
+                for y in (years_res.get("schoolYears") or years_res.get("years") or []):
                     if isinstance(y, dict) and y.get("id"):
                         y_id = str(y["id"])
                         if y_id not in candidate_years:
@@ -176,7 +208,7 @@ class DnevnikClient:
                         class_id = curr_cls
 
                     if not class_id:
-                        classes_list = classes_res.get("classes", [])
+                        classes_list = classes_res.get("classes") or classes_res.get("gradeItemModels") or []
                         if classes_list and isinstance(classes_list[0], dict):
                             class_id = str(classes_list[0].get("value") or classes_list[0].get("id") or "")
 
@@ -291,9 +323,9 @@ class DnevnikClient:
             })
         return result
 
-    async def grades_week(self) -> Dict[str, List[List[Any]]]:
+    async def grades_week(self, school_year: Optional[str] = None) -> Dict[str, List[List[Any]]]:
         """Returns dict of discipline -> list of grade arrays for the current week"""
-        await self.init_ids()
+        await self.init_ids(forced_year=school_year)
         if not self.periods_ids:
             return {}
 
@@ -326,9 +358,9 @@ class DnevnikClient:
                     res[name] = list(grades)
         return res
 
-    async def grades_period(self, period_idx: int) -> List[Dict[str, Any]]:
+    async def grades_period(self, period_idx: int, school_year: Optional[str] = None) -> List[Dict[str, Any]]:
         """Returns grades list for a quarter/period (0=1st quarter, 1=2nd quarter, ...)"""
-        await self.init_ids()
+        await self.init_ids(forced_year=school_year)
         if len(self.periods_ids) >= 6:
             target_period_id = self.periods_ids[period_idx + 2] if (period_idx + 2) < len(self.periods_ids) else self.periods_ids[-1]
         elif len(self.periods_ids) > 0:
@@ -371,9 +403,9 @@ class DnevnikClient:
             })
         return res
 
-    async def grades_year(self) -> List[Dict[str, Any]]:
+    async def grades_year(self, school_year: Optional[str] = None) -> List[Dict[str, Any]]:
         """Returns year grades per subject with 4 quarter grades and final mark"""
-        await self.init_ids()
+        await self.init_ids(forced_year=school_year)
         if len(self.periods_ids) < 2:
             return []
 

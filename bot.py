@@ -144,14 +144,18 @@ async def get_client(telegram_id: int) -> DnevnikClient | None:
     if not user or not user.get("access_token") or not user.get("refresh_token"):
         return None
 
+    meta = user.get("meta", {})
+    school_year = meta.get("school_year")
+
     async def on_refreshed(new_access: str, new_refresh: str):
-        meta = user.get("meta", {})
-        await db.save_tokens(telegram_id, new_access, new_refresh, meta=meta)
+        current_meta = user.get("meta", {})
+        await db.save_tokens(telegram_id, new_access, new_refresh, meta=current_meta)
         logger.info(f"Updated refreshed tokens in database for user {telegram_id}")
 
     return DnevnikClient(
         access_token=user["access_token"],
         refresh_token=user["refresh_token"],
+        school_year=school_year,
         on_token_refreshed=on_refreshed,
     )
 
@@ -427,15 +431,17 @@ async def cmd_grades(message: Message):
         await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
+    yr_display = f" (год: {client.school_year})" if client.school_year else ""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Текущая неделя", callback_data="wgrades")],
             [InlineKeyboardButton(text="1 четверть", callback_data="pgrades0"), InlineKeyboardButton(text="2 четверть", callback_data="pgrades1")],
             [InlineKeyboardButton(text="3 четверть", callback_data="pgrades2"), InlineKeyboardButton(text="4 четверть", callback_data="pgrades3")],
-            [InlineKeyboardButton(text="По четвертям", callback_data="ygrades")],
+            [InlineKeyboardButton(text="По четвертям (Итог)", callback_data="ygrades")],
+            [InlineKeyboardButton(text="🗓 Сменить учебный год", callback_data="select_year")],
         ]
     )
-    await message.answer("Выберите период:", reply_markup=kb)
+    await message.answer(f"Выберите период{yr_display}:", reply_markup=kb)
 
 
 @dp.message(Command("wgrades"))
@@ -569,7 +575,46 @@ async def handle_callback_query(query: CallbackQuery):
         await query.answer()
         return
 
-    if data.startswith("schedule"):
+    if data == "select_year":
+        try:
+            years = await client.get_school_years()
+            rows = []
+            for y in years:
+                y_id = y["id"]
+                y_text = y["text"]
+                mark = " ✅" if client.school_year == y_id else ""
+                rows.append([InlineKeyboardButton(text=f"📚 {y_text}{mark}", callback_data=f"setyear_{y_id}")])
+            rows.append([InlineKeyboardButton(text="◀️ Назад к оценкам", callback_data="back_to_grades")])
+            kb = InlineKeyboardMarkup(inline_keyboard=rows)
+            await query.message.edit_text("Выберите учебный год для просмотра оценок:", reply_markup=kb)
+        except Exception as e:
+            logger.error(f"Error fetching school years: {e}")
+            await query.answer("Не удалось загрузить список учебных лет")
+
+    elif data.startswith("setyear_"):
+        chosen_year = data.split("_", 1)[1]
+        user = await db.get_user(user_id)
+        if user:
+            meta = user.get("meta", {})
+            meta["school_year"] = chosen_year
+            await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
+            await query.answer(f"Выбран {chosen_year} учебный год!")
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            client = await get_client(user_id)
+            if client:
+                await cmd_grades(query.message)
+
+    elif data == "back_to_grades":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await cmd_grades(query.message)
+
+    elif data.startswith("schedule"):
         day_idx = int(data[-1])
         try:
             await query.message.delete()
