@@ -126,21 +126,11 @@ def rich_schedule(
             "cells": table_cells,
         })
 
-    # Embedded in-message day switcher buttons with dates
+    # Embedded in-message day switcher buttons (clean day names)
     days_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
     day_btns = []
-    monday_dt = None
-    if dt_obj:
-        monday_dt = dt_obj - timedelta(days=day_idx)
-
     for idx, name in enumerate(days_short):
-        if monday_dt:
-            cur_dt = monday_dt + timedelta(days=idx)
-            label = f"{name} {cur_dt.day:02d}.{cur_dt.month:02d}"
-        else:
-            label = name
-
-        text = f"• {label} •" if idx == day_idx else label
+        text = f"• {name} •" if idx == day_idx else name
         day_btns.append(_btn_cb(text, f"schedule{idx}"))
 
     blocks.append({"type": "divider"})
