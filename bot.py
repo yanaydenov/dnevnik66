@@ -45,12 +45,22 @@ logger = logging.getLogger("dnevnik_bot")
 dp = Dispatcher(storage=MemoryStorage())
 
 
-# Helper: get client for user with token decryption
+# Helper: get client for user with token decryption and auto-save on refresh
 async def get_client(telegram_id: int) -> DnevnikClient | None:
     user = await db.get_user(telegram_id)
     if not user or not user.get("access_token") or not user.get("refresh_token"):
         return None
-    return DnevnikClient(access_token=user["access_token"], refresh_token=user["refresh_token"])
+
+    async def on_refreshed(new_access: str, new_refresh: str):
+        meta = user.get("meta", {})
+        await db.save_tokens(telegram_id, new_access, new_refresh, meta=meta)
+        logger.info(f"Updated refreshed tokens in database for user {telegram_id}")
+
+    return DnevnikClient(
+        access_token=user["access_token"],
+        refresh_token=user["refresh_token"],
+        on_token_refreshed=on_refreshed,
+    )
 
 
 # Helper: generate user reply buttons with personalized class name

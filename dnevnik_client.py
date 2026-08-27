@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 from datetime import datetime
 import httpx
 from config import DNEVNIK_API_URL
@@ -22,10 +23,17 @@ class DnevnikExternalServerError(DnevnikHttpError):
 
 
 class DnevnikClient:
-    def __init__(self, access_token: str, refresh_token: str, base_url: str = DNEVNIK_API_URL):
+    def __init__(
+        self,
+        access_token: str,
+        refresh_token: str,
+        base_url: str = DNEVNIK_API_URL,
+        on_token_refreshed: Optional[Callable[[str, str], Any]] = None,
+    ):
         self.access_token = access_token
         self.refresh_token = refresh_token
         self.base_url = base_url
+        self.on_token_refreshed = on_token_refreshed
         self.student_id: Optional[str] = None
         self.class_id: Optional[str] = None
         self.school_year: Optional[str] = None
@@ -40,7 +48,14 @@ class DnevnikClient:
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
-    async def _request(self, method: str, path: str, json_body: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        json_body: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        retry_on_401: bool = True,
+    ) -> Any:
         url = f"{self.base_url}{path}"
         async with httpx.AsyncClient(timeout=25.0) as client:
             try:
@@ -61,6 +76,17 @@ class DnevnikClient:
                 except Exception:
                     return response.text
 
+            # Handle 401 token expiration with auto-refresh
+            if response.status_code == 401 and retry_on_401 and path != "/auth/Token/Refresh" and self.refresh_token:
+                logger.info(f"Got 401 for {path}, attempting auto token refresh...")
+                try:
+                    await self.refresh_tokens()
+                    # Retry request with new token
+                    return await self._request(method, path, json_body, params, retry_on_401=False)
+                except Exception as refresh_err:
+                    logger.warning(f"Auto-refresh failed after 401: {refresh_err}")
+                    raise DnevnikUnauthorizedError("Сессия истекла, требуется повторный вход (/login)", 401)
+
             logger.warning(f"Dnevnik API returned {response.status_code} for {path}")
 
             if response.status_code in (400, 401, 403):
@@ -76,47 +102,116 @@ class DnevnikClient:
             raise DnevnikUnauthorizedError("No refresh token provided")
 
         body = {"refreshToken": self.refresh_token}
-        data = await self._request("POST", "/auth/Token/Refresh", json_body=body)
+        data = await self._request("POST", "/auth/Token/Refresh", json_body=body, retry_on_401=False)
         if isinstance(data, dict) and "accessToken" in data and "refreshToken" in data:
             self.access_token = data["accessToken"]
             self.refresh_token = data["refreshToken"]
+
+            if self.on_token_refreshed:
+                try:
+                    res = self.on_token_refreshed(self.access_token, self.refresh_token)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as e:
+                    logger.error(f"Error in on_token_refreshed callback: {e}")
+
             return self.access_token, self.refresh_token
         raise DnevnikUnauthorizedError(f"Invalid refresh response: {data}")
 
-    async def init_ids(self) -> None:
-        """Initializes studentId, classId, schoolYear, and periodsIds"""
-        if self.student_id and self.class_id and self.periods_ids:
+    async def init_student_id(self) -> None:
+        """Initializes studentId and profile without needing class/periods"""
+        if self.student_id:
             return
 
         students_data = await self.get_students()
-        students = students_data.get("students", [])
+        students = students_data.get("students", []) if isinstance(students_data, dict) else []
         if not students:
             raise DnevnikHttpError("No students found in account")
 
-        # Select first student or already selected
         student = students[0]
         self.student_id = student["id"]
         self._cached_profile = student
 
-        # Get school year
-        years_res = await self._request("GET", "/estimate/years", params={"studentId": self.student_id})
-        self.school_year = years_res.get("currentYear", {}).get("id", str(datetime.now().year))
+    async def init_ids(self) -> None:
+        """Initializes studentId, classId, schoolYear, and periodsIds with fallback support"""
+        await self.init_student_id()
 
-        # Get class ID
-        classes_res = await self._request("GET", "/classes", params={"studentId": self.student_id, "schoolYear": self.school_year})
-        self.class_id = classes_res.get("currentClass", {}).get("value", "")
+        if self.class_id and self.periods_ids and self.school_year:
+            return
 
-        # Get periods IDs
-        periods_res = await self._request("GET", "/estimate/periods", params={"studentId": self.student_id, "schoolYear": self.school_year})
-        periods = periods_res.get("periods", [])
-        self.periods_ids = [p["id"] for p in periods]
+        # 1. Fetch available school years
+        candidate_years: List[str] = []
+        try:
+            years_res = await self._request("GET", "/estimate/years", params={"studentId": self.student_id})
+            if isinstance(years_res, dict):
+                curr = years_res.get("currentYear")
+                if isinstance(curr, dict) and curr.get("id"):
+                    candidate_years.append(str(curr["id"]))
+                elif isinstance(curr, (str, int)):
+                    candidate_years.append(str(curr))
+
+                for y in years_res.get("years", []):
+                    if isinstance(y, dict) and y.get("id"):
+                        y_id = str(y["id"])
+                        if y_id not in candidate_years:
+                            candidate_years.append(y_id)
+        except Exception as e:
+            logger.warning(f"Could not fetch years from /estimate/years: {e}")
+
+        if not candidate_years:
+            curr_year = datetime.now().year
+            candidate_years = [str(curr_year), str(curr_year - 1)]
+
+        last_error = None
+        for yr in candidate_years:
+            try:
+                # 2. Get class ID for this year
+                classes_res = await self._request("GET", "/classes", params={"studentId": self.student_id, "schoolYear": yr})
+                class_id = ""
+                if isinstance(classes_res, dict):
+                    curr_cls = classes_res.get("currentClass")
+                    if isinstance(curr_cls, dict):
+                        class_id = str(curr_cls.get("value") or curr_cls.get("id") or "")
+                    elif isinstance(curr_cls, str):
+                        class_id = curr_cls
+
+                    if not class_id:
+                        classes_list = classes_res.get("classes", [])
+                        if classes_list and isinstance(classes_list[0], dict):
+                            class_id = str(classes_list[0].get("value") or classes_list[0].get("id") or "")
+
+                if not class_id:
+                    continue
+
+                # 3. Get periods IDs for this year and class (MUST pass classId)
+                periods_res = await self._request("GET", "/estimate/periods", params={
+                    "studentId": self.student_id,
+                    "schoolYear": yr,
+                    "classId": class_id,
+                })
+
+                periods = periods_res.get("periods", []) if isinstance(periods_res, dict) else []
+                if periods:
+                    self.school_year = yr
+                    self.class_id = class_id
+                    self.periods_ids = [p["id"] for p in periods if isinstance(p, dict) and "id" in p]
+                    logger.info(f"Initialized grades context: year={yr}, classId={class_id}, periods count={len(self.periods_ids)}")
+                    return
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Failed to init periods for schoolYear={yr}: {e}")
+                continue
+
+        if last_error:
+            raise last_error
+        raise DnevnikHttpError("Не удалось определить учебный период или класс ученика")
 
     async def profile(self) -> Dict[str, Any]:
         """Returns student profile dictionary"""
         if self._cached_profile:
             return self._cached_profile
         students_data = await self.get_students()
-        students = students_data.get("students", [])
+        students = students_data.get("students", []) if isinstance(students_data, dict) else []
         if students:
             self._cached_profile = students[0]
             self.student_id = students[0]["id"]
@@ -128,13 +223,13 @@ class DnevnikClient:
 
     async def schedule(self, day_idx: int, date_str: Optional[str] = None) -> List[Dict[str, str]]:
         """Returns list of lessons for the given day index (0=Monday..5=Saturday)"""
-        await self.init_ids()
+        await self.init_student_id()
         params = {"studentId": self.student_id}
         if date_str:
             params["date"] = date_str
 
         data = await self._request("GET", "/schedule", params=params)
-        days = data.get("scheduleModel", {}).get("days", [])
+        days = data.get("scheduleModel", {}).get("days", []) if isinstance(data, dict) else []
 
         if day_idx < len(days):
             target_day = days[day_idx]
@@ -154,7 +249,7 @@ class DnevnikClient:
         return []
 
     async def schedule_raw(self, date_str: Optional[str] = None) -> Dict[str, Any]:
-        await self.init_ids()
+        await self.init_student_id()
         params = {"studentId": self.student_id}
         if date_str:
             params["date"] = date_str
@@ -162,7 +257,7 @@ class DnevnikClient:
 
     async def homework(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """Returns homework data for a date with pagination links"""
-        await self.init_ids()
+        await self.init_student_id()
         params = {"studentId": self.student_id}
         if date_str:
             params["date"] = date_str
