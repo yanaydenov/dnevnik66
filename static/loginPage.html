@@ -3,212 +3,729 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
-  <title>Форма логина</title>
+  <title>Вход в электронный дневник</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
   <style>
+    :root {
+      --bg-gradient-start: #0f172a;
+      --bg-gradient-end: #1e293b;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-primary: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-glow: rgba(59, 130, 246, 0.35);
+      --accent-green: #10b981;
+      --accent-amber: #f59e0b;
+      --input-bg: rgba(15, 23, 42, 0.6);
+      --input-border: rgba(255, 255, 255, 0.15);
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
     body {
-      font-family: Verdana, Geneva, Tahoma, sans-serif;
-      background-color: #f2f2f2;
+      background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+      color: var(--text-main);
+      min-height: 100vh;
       display: flex;
       justify-content: center;
-      align-items: center;
-      margin: 0;
+      align-items: flex-start;
+      padding: 16px;
     }
 
-    .login-container {
-      background-color: #fff;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-      max-width: 800px;
+    .app-container {
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
     }
 
-    h2 {
+    /* Header Card */
+    .header-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 24px 20px;
       text-align: center;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      position: relative;
+      overflow: hidden;
     }
 
-    .form-group {
-      margin-bottom: 15px;
+    .header-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 60%);
+      pointer-events: none;
     }
 
-    label {
-      display: block;
-      margin-bottom: 5px;
+    .logo-badge {
+      width: 52px;
+      height: 52px;
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      border-radius: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      margin-bottom: 12px;
+      box-shadow: 0 8px 16px var(--accent-glow);
     }
 
-    input[type="text"],
-    input[type="password"] {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      box-sizing: border-box;
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
     }
 
-    button {
-      width: 100%;
-      padding: 10px;
-      background-color: #4CAF50;
-      color: white;
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    /* Method Tabs */
+    .tabs-container {
+      display: flex;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 10px 14px;
       border: none;
-      border-radius: 5px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
       cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
 
-    button:hover {
-      background-color: #45a049;
+    .tab-btn.active {
+      background: var(--accent-primary);
+      color: #fff;
+      box-shadow: 0 4px 12px var(--accent-glow);
     }
 
-    .instruction {
-      margin-bottom: 20px;
-      padding: 10px;
-      background-color: #e7f3fe;
-      border-left: 5px solid #2196F3;
-      font-size: 12pt;
-      line-height: 1.2em;
+    /* Content Cards */
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
     }
 
-    .instruction strong {
-      color: #2196F3;
-    }
-
-    #show-info {
-      color: #2196F3;
-      text-decoration: none;
-      cursor: pointer;
-      border-bottom: 1px dashed #2196F3;
-    }
-
-    #show-info:hover {
-      border-bottom: 1px solid #2196F3;
-    }
-
-    #info-container {
+    .instruction-content {
       display: none;
-      margin-bottom: 20px;
     }
 
-    #info-container.opened {
+    .instruction-content.active {
       display: block;
-      margin-bottom: 20px;
-      padding-left: 8px;
-      border-left: 2px dashed #2196F3;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Step items */
+    .step-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #e2e8f0;
+    }
+
+    .step-num {
+      width: 24px;
+      height: 24px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--accent-primary);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* Code Snippet Box */
+    .code-box {
+      margin-top: 14px;
+      background: rgba(10, 15, 30, 0.85);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      position: relative;
+    }
+
+    .code-box-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+
+    .code-text {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      color: #38bdf8;
+      word-break: break-all;
+      line-height: 1.4;
+      user-select: all;
+    }
+
+    .btn-copy {
+      background: rgba(59, 130, 246, 0.25);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-copy:hover {
+      background: var(--accent-primary);
+      color: #fff;
+    }
+
+    .btn-copy.copied {
+      background: var(--accent-green);
+      color: #fff;
+      border-color: var(--accent-green);
+    }
+
+    /* Video section */
+    .video-wrapper {
+      margin-top: 14px;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      background: #000;
     }
 
     video {
-      display: block;
       width: 100%;
-      margin-bottom: 20px;
-      border-radius: 5px;
+      display: block;
+    }
+
+    /* Smart Paste Box */
+    .smart-paste-box {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px dashed rgba(59, 130, 246, 0.4);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 18px;
+      text-align: center;
+    }
+
+    .smart-paste-box p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .btn-smart-paste {
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-smart-paste:hover {
+      background: var(--accent-primary);
+      color: #fff;
+    }
+
+    /* Form Fields */
+    .form-group {
+      margin-bottom: 16px;
+      position: relative;
+    }
+
+    .form-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-field {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: var(--radius-md);
+      padding: 12px 44px 12px 14px;
+      color: #fff;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+
+    .input-field:focus {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .toggle-visibility-btn {
+      position: absolute;
+      right: 12px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s ease;
+    }
+
+    .toggle-visibility-btn:hover {
+      color: #fff;
+    }
+
+    /* Submit Button */
+    .submit-btn {
+      width: 100%;
+      background: linear-gradient(135deg, var(--accent-primary) 0%, #4f46e5 100%);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 8px 20px var(--accent-glow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .submit-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 25px var(--accent-glow);
+    }
+
+    .submit-btn:active {
+      transform: translateY(1px);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Security Note */
+    .security-note {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 12px;
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 999;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
     }
   </style>
 </head>
 
 <body>
 
-  <div class="login-container">
-    <h2>Авторизация</h2>
-    <div class="instruction">
-      <p>Чтобы бот 🤖 заработал, нужно дать ему авторизоваться в дневнике. Предположительно, это нужно будет сделать
-        один раз 😅.</p>
-      <p><a id="show-info">Показать подробности</a></p>
-      <div id="info-container">
-        <p>Веб сайт дневника дает возможность войти только используя авторизацию через Госуслуги. После того как вы
-          авторизовались в Госуслугах, вас перенаправляют на страницу дневника. На этом этапе уже есть все данные
-          (токены)
-          для подключения бота к вашей учетной записи в дневнике.</p>
-        <p>Бот не может авторизоваться в дневнике таким же способом. Единственная возможность дать боту доступ - это
-          предоставить токены авторизации дневника. Именно по этим токенам веб сайт дневника понимает кто зашел на
-          страницу.</p>
-      </div>
+  <div class="app-container">
+
+    <!-- Header Section -->
+    <div class="header-card">
+      <div class="logo-badge">🎓</div>
+      <h1>Электронный дневник</h1>
+      <p class="subtitle">Авторизация для получения расписания, оценок и домашних заданий</p>
     </div>
-    <div class="instruction">
-      <strong>⚒️ Вам понадобятся:</strong>
-      <ol>
-        <li>💻 Компьютер или ноутбук с браузером.</li>
-        <li>💬 Telegram, желательно на этом же компьютере.</li>
-        <li>⌚️ 3-5 минут времени.</li>
-      </ol>
+
+    <!-- Instruction Methods Tabs -->
+    <div class="tabs-container">
+      <button class="tab-btn active" id="tab-btn-fast" onclick="switchTab('fast')">
+        ⚡️ Быстрый способ (10 сек)
+      </button>
+      <button class="tab-btn" id="tab-btn-manual" onclick="switchTab('manual')">
+        🔍 Вручную через F12
+      </button>
     </div>
-    <div class="instruction">
-      <strong>💡 Совет:</strong>
-      <p>
-        Проще всего использовать веб-версию телеграма <strong>https://web.telegram.org/</strong>.
-      </p>
-    </div>
-    <div class="instruction">
-      <strong>📋 Инструкция:</strong>
-      <p>Чтобы найти токены, выполните следующие шаги:</p>
-      <ol>
-        <li>Авторизуйтесь в дневнике, используя браузер на компьютере.</li>
-        <li>Откройте инструменты разработчика клавишей F12 или правый клик → "Посмотреть код" (inspect).</li>
-        <li>Перейдите на вкладку <strong>Приложение</strong> (Application).</li>
-        <li>В левой колонке выберите <strong>Локальное хранилище</strong> (Local Storage) и найдите
-          <strong>https://dnevnik.egov66.ru</strong>.
+
+    <!-- Fast Method Instruction Card -->
+    <div class="card instruction-content active" id="tab-fast">
+      <ol class="step-list">
+        <li class="step-item">
+          <span class="step-num">1</span>
+          <div>Откройте дневник <strong>dnevnik.egov66.ru</strong> на компьютере в браузере.</div>
         </li>
-        <li>Чуть правее найдите значения <strong>Auth__token</strong> и <strong>Auth__refresh</strong> в сохраненных
-          данных.</li>
-        <li>Используйте их для заполнения формы ниже.</li>
+        <li class="step-item">
+          <span class="step-num">2</span>
+          <div>Нажмите <strong>F12</strong> (или правый клик → «Просмотреть код») и откройте вкладку <strong>Console (Консоль)</strong>.</div>
+        </li>
+        <li class="step-item">
+          <span class="step-num">3</span>
+          <div>Скопируйте команду ниже, вставьте в консоль и нажмите <strong>Enter</strong>:</div>
+        </li>
       </ol>
-    </div>
 
-    <div class="instruction">
-      <strong>🎥 Наглядное пособие:</strong>
-      <p>
-        <video controls>
-          <source src="where-tokens-are.webm" type="video/webm">
-          Ваш браузер не поддерживает воспроизведение видео.
-        </video>
+      <div class="code-box">
+        <div class="code-box-header">
+          <span>КОМАНДА ДЛЯ КОНСОЛИ</span>
+          <button type="button" class="btn-copy" id="btn-copy-script" onclick="copyConsoleSnippet()">
+            <span>📋 Скопировать</span>
+          </button>
+        </div>
+        <div class="code-text" id="console-snippet">copy(JSON.stringify({accessToken: localStorage.getItem('Auth__token'), refreshToken: localStorage.getItem('Auth__refresh')}))</div>
+      </div>
+      
+      <p style="font-size: 13px; color: var(--text-muted); margin-top: 10px;">
+        ✨ После нажатия Enter оба токена мгновенно скопируются в буфер обмена!
       </p>
     </div>
 
-    <form id="tokensForm">
-      <div class="form-group">
-        <label for="refreshToken">Auth__refresh:</label>
-        <input type="password" id="refreshToken" name="refreshToken" required>
+    <!-- Manual Method Instruction Card -->
+    <div class="card instruction-content" id="tab-manual">
+      <ol class="step-list">
+        <li class="step-item">
+          <span class="step-num">1</span>
+          <div>Откройте <strong>dnevnik.egov66.ru</strong> и нажмите <strong>F12</strong>.</div>
+        </li>
+        <li class="step-item">
+          <span class="step-num">2</span>
+          <div>Перейдите на вкладку <strong>Application (Приложение)</strong> → <strong>Local Storage (Локальное хранилище)</strong>.</div>
+        </li>
+        <li class="step-item">
+          <span class="step-num">3</span>
+          <div>Найдите ключи <strong>Auth__token</strong> и <strong>Auth__refresh</strong> и скопируйте их значения.</div>
+        </li>
+      </ol>
+
+      <div class="video-wrapper">
+        <video controls playsinline poster="favicon.ico">
+          <source src="where-tokens-are.webm" type="video/webm">
+          Ваш браузер не поддерживает видео.
+        </video>
       </div>
-      <div class="form-group">
-        <label for="accessToken">Auth__token:</label>
-        <input type="password" id="accessToken" name="accessToken" required>
+    </div>
+
+    <!-- Input Form Card -->
+    <div class="card">
+      <!-- Smart Paste helper -->
+      <div class="smart-paste-box">
+        <p>Скопировали данные из консоли или буфера?</p>
+        <button type="button" class="btn-smart-paste" onclick="pasteFromClipboard()">
+          📋 Вставить всё из буфера обмена
+        </button>
       </div>
-      <button type="submit">Войти</button>
-    </form>
+
+      <form id="tokensForm">
+        <div class="form-group">
+          <div class="form-label">
+            <span>Токен обновления (Auth__refresh):</span>
+          </div>
+          <div class="input-wrapper">
+            <input type="password" id="refreshToken" name="refreshToken" class="input-field" placeholder="eyJhbGciOi..." required autocomplete="off">
+            <button type="button" class="toggle-visibility-btn" onclick="toggleVisibility('refreshToken', this)">👁</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>Токен доступа (Auth__token):</span>
+          </div>
+          <div class="input-wrapper">
+            <input type="password" id="accessToken" name="accessToken" class="input-field" placeholder="eyJhbGciOi..." required autocomplete="off">
+            <button type="button" class="toggle-visibility-btn" onclick="toggleVisibility('accessToken', this)">👁</button>
+          </div>
+        </div>
+
+        <button type="submit" class="submit-btn" id="submitBtn">
+          <span>🚀 Подключить дневник</span>
+        </button>
+      </form>
+
+      <div class="security-note">
+        🔒 Данные шифруются и безопасно передаются в Telegram
+      </div>
+    </div>
+
   </div>
 
+  <div class="toast" id="toast">Сообщение</div>
+
   <script>
-    const form = document.getElementById('tokensForm')
-
-    form.addEventListener('submit', function (event) {
-      const webApp = window.Telegram.WebApp
-      const chat = window.Telegram.WebAppChat
-      const user = window.Telegram.WebAppUser
-      const accessToken = event.target.elements.accessToken.value
-      const refreshToken = event.target.elements.refreshToken.value
-
-      // See the field web_app_data in the class Message (https://core.telegram.org/bots/api#message)
-      webApp.sendData(JSON.stringify({ accessToken, refreshToken }))
-
-      event.target.reset()
-      event.preventDefault()
-    })
-  </script>
-  <script>
-    const showInfoLink = document.getElementById('show-info')
-    const infoContainer = document.getElementById('info-container')
-    const openedClassName = 'opened'
-
-    showInfoLink.addEventListener('click', function (event) {
-      event.preventDefault()
-      if (infoContainer.classList.contains(openedClassName)) {
-        infoContainer.classList.remove(openedClassName)
-        showInfoLink.textContent = 'Показать подробности'
-      } else {
-        infoContainer.classList.add(openedClassName)
-        showInfoLink.textContent = 'Скрыть подробности'
+    // Initialize Telegram Mini App
+    const webApp = window.Telegram?.WebApp;
+    if (webApp) {
+      webApp.ready();
+      webApp.expand();
+      if (webApp.setHeaderColor) {
+        webApp.setHeaderColor('#0f172a');
       }
-    })
+    }
+
+    // Switch Instruction Tabs
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.instruction-content').forEach(c => c.classList.remove('active'));
+
+      document.getElementById('tab-btn-' + tabId).classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+    }
+
+    // Toggle Password Visibility
+    function toggleVisibility(inputId, btn) {
+      const input = document.getElementById(inputId);
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = '🔒';
+      } else {
+        input.type = 'password';
+        btn.textContent = '👁';
+      }
+    }
+
+    // Toast Notifications
+    function showToast(text) {
+      const toast = document.getElementById('toast');
+      toast.textContent = text;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2500);
+    }
+
+    // Copy Console Snippet
+    function copyConsoleSnippet() {
+      const snippet = document.getElementById('console-snippet').textContent;
+      navigator.clipboard.writeText(snippet).then(() => {
+        const btn = document.getElementById('btn-copy-script');
+        btn.classList.add('copied');
+        btn.innerHTML = '<span>✅ Скопировано!</span>';
+        showToast('Команда скопирована! Вставьте её в консоль дневника');
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<span>📋 Скопировать</span>';
+        }, 2500);
+      }).catch(() => {
+        showToast('Выделите и скопируйте текст вручную');
+      });
+    }
+
+    // Smart Paste Parser
+    function parseTokensString(raw) {
+      if (!raw) return null;
+      raw = raw.trim();
+
+      // Try parsing JSON format
+      if (raw.startsWith('{') && raw.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.accessToken && parsed.refreshToken) {
+            return {
+              accessToken: String(parsed.accessToken).trim(),
+              refreshToken: String(parsed.refreshToken).trim()
+            };
+          }
+        } catch (e) {}
+      }
+
+      // Try Auth__token and Auth__refresh patterns
+      if (raw.includes('Auth__token') || raw.includes('Auth__refresh')) {
+        const tokenMatch = raw.match(/Auth__token["']?\s*[:=]\s*["']?([^"'\s,]+)/);
+        const refreshMatch = raw.match(/Auth__refresh["']?\s*[:=]\s*["']?([^"'\s,]+)/);
+        if (tokenMatch && refreshMatch) {
+          return {
+            accessToken: tokenMatch[1],
+            refreshToken: refreshMatch[1]
+          };
+        }
+      }
+
+      return null;
+    }
+
+    // Auto-detect JSON pasted into either input
+    function checkAutoFill(event) {
+      const text = (event.clipboardData || window.clipboardData)?.getData('text');
+      if (text) {
+        const parsed = parseTokensString(text);
+        if (parsed) {
+          event.preventDefault();
+          document.getElementById('accessToken').value = parsed.accessToken;
+          document.getElementById('refreshToken').value = parsed.refreshToken;
+          showToast('✅ Токены успешно распознаны и заполнены!');
+        }
+      }
+    }
+
+    document.getElementById('accessToken').addEventListener('paste', checkAutoFill);
+    document.getElementById('refreshToken').addEventListener('paste', checkAutoFill);
+
+    // Paste from Clipboard Button
+    async function pasteFromClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        const parsed = parseTokensString(text);
+        if (parsed) {
+          document.getElementById('accessToken').value = parsed.accessToken;
+          document.getElementById('refreshToken').value = parsed.refreshToken;
+          showToast('✅ Токены успешно вставлены!');
+        } else {
+          showToast('В буфере не найден JSON с токенами. Заполните поля вручную.');
+        }
+      } catch (err) {
+        showToast('Нажмите долго на поле ввода и выберите «Вставить»');
+      }
+    }
+
+    // Form Submit Handler
+    const form = document.getElementById('tokensForm');
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+
+      let accessToken = document.getElementById('accessToken').value.trim();
+      let refreshToken = document.getElementById('refreshToken').value.trim();
+
+      // Check if user accidentally pasted full JSON into one field
+      const parsedAccess = parseTokensString(accessToken);
+      if (parsedAccess) {
+        accessToken = parsedAccess.accessToken;
+        refreshToken = parsedAccess.refreshToken;
+      }
+      const parsedRefresh = parseTokensString(refreshToken);
+      if (parsedRefresh) {
+        accessToken = parsedRefresh.accessToken;
+        refreshToken = parsedRefresh.refreshToken;
+      }
+
+      if (!accessToken || !refreshToken) {
+        showToast('Пожалуйста, заполните оба поля');
+        return;
+      }
+
+      if (webApp && webApp.HapticFeedback) {
+        webApp.HapticFeedback.notificationOccurred('success');
+      }
+
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span>⏳ Подключение...</span>';
+
+      if (webApp && webApp.sendData) {
+        webApp.sendData(JSON.stringify({ accessToken, refreshToken }));
+      } else {
+        showToast('Отправка в Telegram...');
+      }
+    });
   </script>
 
 </body>
