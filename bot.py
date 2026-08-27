@@ -222,14 +222,6 @@ async def get_reply_keyboard(telegram_id: int) -> ReplyKeyboardMarkup | ReplyKey
     )
 
 
-def get_unreg_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Войти", callback_data="reg")]
-        ]
-    )
-
-
 def get_login_keyboard() -> ReplyKeyboardMarkup:
     if WEBAPP_URL:
         return ReplyKeyboardMarkup(
@@ -247,10 +239,11 @@ async def send_login_prompt(bot: Bot, chat_id: int):
     blocks = [
         {"type": "heading", "text": "🔑 Вход в электронный дневник", "size": 1},
         {"type": "divider"},
-        {"type": "paragraph", "text": "Для входа нажмите кнопку «✏️ Войти через WebApp» внизу экрана 👇\nВ открывшемся окне следуйте краткой инструкции для получения токенов."},
+        {"type": "paragraph", "text": "Для доступа к расписанию, оценкам и домашним заданиям необходимо войти в аккаунт.\n\nНажмите кнопку «✏️ Войти через WebApp» внизу экрана 👇"},
         {"type": "divider"},
         {"type": "buttons", "buttons": [
-            rf._btn_cb("📖 Инструкция и помощь", "help")
+            rf._btn_cb("✏️ Войти / Регистрация", "reg"),
+            rf._btn_cb("📖 Инструкция и помощь", "help"),
         ]}
     ]
     fallback = "Чтобы войти, нажмите кнопку «✏️ Войти через WebApp» внизу экрана."
@@ -288,7 +281,7 @@ async def handle_unauthorized_user(bot: Bot, user_id: int, chat_id: int, message
 async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
     client = await get_client(user_id)
     if not client:
-        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(bot, chat_id)
         return
 
     try:
@@ -314,7 +307,7 @@ async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Opt
 async def send_year_selection(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
     client = await get_client(user_id)
     if not client:
-        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(bot, chat_id)
         return
 
     try:
@@ -413,13 +406,18 @@ async def handle_webapp_data(message: Message):
 
     except (DnevnikUnauthorizedError, Exception) as e:
         logger.error(f"Login error: {e}")
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✏️ Попробовать снова", callback_data="reg")]]
-        )
-        await message.answer(
-            "Произошла ошибка. Возможно, вы ввели неверные или устаревшие токены.\nПопробуйте заново 👇",
-            reply_markup=kb,
-        )
+        blocks = [
+            {"type": "heading", "text": "❌ Ошибка входа", "size": 1},
+            {"type": "divider"},
+            {"type": "paragraph", "text": "Произошла ошибка при проверке данных. Возможно, токены устарели или введены неверно.\n\nПопробуйте заново 👇"},
+            {"type": "divider"},
+            {"type": "buttons", "buttons": [
+                rf._btn_cb("✏️ Попробовать снова", "reg"),
+                rf._btn_cb("📖 Помощь", "help"),
+            ]}
+        ]
+        fallback = "Произошла ошибка. Возможно, вы ввели неверные или устаревшие токены. Попробуйте заново (/login)."
+        await send_rich_msg(message.bot, message.chat.id, blocks, fallback)
 
 
 @dp.message(Command("help"))
@@ -456,7 +454,7 @@ async def cmd_profile(message: Message):
     user_id = message.from_user.id
     client = await get_client(user_id)
     if not client:
-        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(message.bot, message.chat.id)
         return
 
     try:
@@ -482,18 +480,21 @@ async def cmd_profile(message: Message):
 async def cmd_delacc(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or not user.get("access_token"):
-        await message.answer("Чтобы удалить аккаунт, нужно сначала зарегистрироваться", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(message.bot, message.chat.id)
         return
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Да, удалить", callback_data="deleteacc1"),
-                InlineKeyboardButton(text="Нет, отмена", callback_data="deleteacc0"),
-            ]
-        ]
-    )
-    await message.answer("Удалить аккаунт?", reply_markup=kb)
+    blocks = [
+        {"type": "heading", "text": "🗑 Удаление аккаунта", "size": 1},
+        {"type": "divider"},
+        {"type": "paragraph", "text": "Вы действительно хотите удалить свой аккаунт и очистить все сохраненные токены?"},
+        {"type": "divider"},
+        {"type": "buttons", "buttons": [
+            rf._btn_cb("🔴 Да, удалить", "deleteacc1"),
+            rf._btn_cb("🟢 Нет, отмена", "deleteacc0"),
+        ]}
+    ]
+    fallback = "Вы действительно хотите удалить аккаунт?"
+    await send_rich_msg(message.bot, message.chat.id, blocks, fallback)
 
 
 # -------------------------------------------------------------
@@ -507,7 +508,7 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
     bot = message_or_query.bot
 
     if not client:
-        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(bot, chat_id)
         return
 
     msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
@@ -568,7 +569,7 @@ async def cmd_wgrades(message: Message):
     user_id = message.from_user.id
     client = await get_client(user_id)
     if not client:
-        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(message.bot, message.chat.id)
         return
 
     try:
@@ -589,7 +590,7 @@ async def cmd_pgrades(message: Message):
     user_id = message.from_user.id
     client = await get_client(user_id)
     if not client:
-        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(message.bot, message.chat.id)
         return
 
     try:
@@ -612,7 +613,7 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
     bot = message_or_query.bot
 
     if not client:
-        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(bot, chat_id)
         return
 
     msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
@@ -639,7 +640,7 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
     bot = message_or_query.bot
 
     if not client:
-        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(bot, chat_id)
         return
 
     msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
@@ -669,7 +670,7 @@ async def cmd_homework(message: Message):
     user_id = message.from_user.id
     client = await get_client(user_id)
     if not client:
-        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await send_login_prompt(message.bot, message.chat.id)
         return
 
     try:
@@ -788,20 +789,23 @@ async def handle_callback_query(query: CallbackQuery):
             return
 
         if data == "deleteacc_prompt":
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="Да, удалить", callback_data="deleteacc1"),
-                        InlineKeyboardButton(text="Нет, отмена", callback_data="deleteacc0"),
-                    ]
-                ]
-            )
-            await bot.send_message(chat_id=chat_id, text="Вы действительно хотите удалить аккаунт?", reply_markup=kb)
+            blocks = [
+                {"type": "heading", "text": "🗑 Удаление аккаунта", "size": 1},
+                {"type": "divider"},
+                {"type": "paragraph", "text": "Вы действительно хотите удалить свой аккаунт и очистить все сохраненные токены?"},
+                {"type": "divider"},
+                {"type": "buttons", "buttons": [
+                    rf._btn_cb("🔴 Да, удалить", "deleteacc1"),
+                    rf._btn_cb("🟢 Нет, отмена", "deleteacc0"),
+                ]}
+            ]
+            fallback = "Вы действительно хотите удалить аккаунт?"
+            await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
             await query.answer()
             return
 
         if not client:
-            await bot.send_message(chat_id=chat_id, text="Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+            await send_login_prompt(bot, chat_id)
             await query.answer()
             return
 
@@ -859,14 +863,18 @@ async def handle_callback_query(query: CallbackQuery):
         elif data.startswith("deleteacc"):
             if data[-1] == "1":
                 await db.delete_tokens(user_id)
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="✏️ Повторная регистрация", callback_data="reg")]]
-                )
-                await bot.send_message(chat_id=chat_id, text="Ваш аккаунт удален", reply_markup=kb)
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
+                blocks = [
+                    {"type": "heading", "text": "🗑 Аккаунт удален", "size": 1},
+                    {"type": "divider"},
+                    {"type": "paragraph", "text": "Ваши данные и токены были успешно удалены из бота."},
+                    {"type": "divider"},
+                    {"type": "buttons", "buttons": [
+                        rf._btn_cb("✏️ Повторная регистрация", "reg")
+                    ]}
+                ]
+                fallback = "Ваш аккаунт удален."
+                login_kb = get_login_keyboard()
+                await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback, reply_markup=login_kb)
             else:
                 try:
                     await query.message.delete()
