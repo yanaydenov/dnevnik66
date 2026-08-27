@@ -689,7 +689,7 @@
 
     // Form Submit Handler
     const form = document.getElementById('tokensForm');
-    form.addEventListener('submit', function (event) {
+    form.addEventListener('submit', async function (event) {
       event.preventDefault();
 
       let accessToken = document.getElementById('accessToken').value.trim();
@@ -718,12 +718,54 @@
 
       const submitBtn = document.getElementById('submitBtn');
       submitBtn.disabled = true;
-      submitBtn.innerHTML = '<span>⏳ Подключение...</span>';
+      submitBtn.innerHTML = '<span>⏳ Проверка и вход...</span>';
 
-      if (webApp && webApp.sendData) {
-        webApp.sendData(JSON.stringify({ accessToken, refreshToken }));
-      } else {
-        showToast('Отправка в Telegram...');
+      // 1. Try sending via native webApp.sendData (available for Keyboard buttons)
+      let sentViaData = false;
+      try {
+        if (webApp && webApp.sendData) {
+          webApp.sendData(JSON.stringify({ accessToken, refreshToken }));
+          sentViaData = true;
+        }
+      } catch (e) {}
+
+      // 2. Also send via HTTP POST /api/login (works for Inline WebApp buttons and browsers)
+      try {
+        const initData = webApp ? webApp.initData : '';
+        const initDataUnsafe = webApp ? webApp.initDataUnsafe : {};
+        const userId = initDataUnsafe?.user?.id;
+
+        const resp = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            initData: initData,
+            userId: userId,
+            accessToken: accessToken,
+            refreshToken: refreshToken
+          })
+        });
+
+        const resData = await resp.json();
+        if (resp.ok && resData.success) {
+          showToast('✅ Успешный вход! Закрываем окно...');
+          setTimeout(() => {
+            if (webApp && webApp.close) {
+              webApp.close();
+            }
+          }, 800);
+          return;
+        } else {
+          showToast(resData.error || 'Ошибка при входе. Проверьте токены.');
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<span>🚀 Подключить дневник</span>';
+        }
+      } catch (apiErr) {
+        if (!sentViaData) {
+          showToast('Не удалось связаться с сервером. Попробуйте еще раз.');
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<span>🚀 Подключить дневник</span>';
+        }
       }
     });
   </script>
