@@ -1,9 +1,9 @@
-import math
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
 SPEC_CHARS = ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '<', '&', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+NUM_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
 
 def esc_md(text: Any) -> str:
@@ -47,42 +47,54 @@ def format_file_plural(count: int) -> str:
 
 
 def format_homework_message(hw: Dict[str, Any]) -> str:
+    """
+    Formats homework using Telegram Expandable Blockquotes (**> ... ||)
+    for sleek expandable descriptions.
+    """
     date_raw = hw.get("date", "0001-01-01")
     try:
         parts = [int(i) for i in date_raw.split("-")]
         dt = datetime(parts[0], parts[1], parts[2])
-        header = f"{WEEKDAYS[dt.weekday()]} • {parts[2]}-{parts[1]}-{parts[0]}"
+        header = f"🗓 *{esc_md(WEEKDAYS[dt.weekday()])} • {parts[2]:02d}\\.{parts[1]:02d}\\.{parts[0]}*"
     except Exception:
-        header = date_raw
+        header = f"🗓 *{esc_md(date_raw)}*"
 
-    res = esc_md(header) + "\n\n"
+    res = header + "\n\n"
 
     homework_list = hw.get("homework", [])
     if homework_list:
         for item in homework_list:
-            name = item.get("lessonName", "")
-            desc = item.get("description", "Нет задания")
-            files_count = item.get("filesCount", 0)
+            name = item.get("lessonName", "") or "Урок"
+            desc = (item.get("description") or "").strip() or "Нет описания задания"
+            files = item.get("files", [])
+            files_count = len(files) if files else item.get("filesCount", 0)
 
             files_str = ""
             if files_count > 0:
-                files_str = f" \\(📎 {files_count} {format_file_plural(files_count)}\\)"
+                files_str = f" _\\(📎 {files_count} {format_file_plural(files_count)}\\)_"
 
-            res += f"{esc_md(name)}{files_str}:\n>{esc_md(desc)}||\n\n"
+            # Create expandable blockquote with **> and ||
+            desc_escaped = esc_md(desc)
+            lines = desc_escaped.split("\n")
+            formatted_lines = [f"**>{lines[0]}"] + [f">{l}" for l in lines[1:]]
+            quote_block = "\n".join(formatted_lines) + "||"
+
+            res += f"📖 *{esc_md(name)}*{files_str}\n{quote_block}\n\n"
     else:
-        res += "*Нет домашних заданий*"
+        res += "✨ _На этот день домашних заданий нет_"
 
     return res
 
 
 def format_schedule_message(day_idx: int, lessons: List[Dict[str, Any]]) -> str:
-    res = esc_md(WEEKDAYS[day_idx]) + "\n\n"
+    """Formats schedule with numbered badges, times and room indicators"""
+    res = f"🗓 *{esc_md(WEEKDAYS[day_idx])}*\n\n"
     if day_idx == 6 or not lessons:
-        res += "*В этот день уроков нет*"
+        res += "🛋 _В этот день уроков нет_"
         return res
 
-    for l in lessons:
-        num = l.get("num", "")
+    for idx, l in enumerate(lessons):
+        num_str = l.get("num", str(idx + 1))
         name = l.get("name", "")
         room = l.get("room", "")
 
@@ -91,16 +103,18 @@ def format_schedule_message(day_idx: int, lessons: List[Dict[str, Any]]) -> str:
 
         time_str = ""
         if bh is not None and bm is not None and eh is not None and em is not None:
-            time_str = f"{bh:02d}:{bm:02d}\\.{eh:02d}:{em:02d} · "
+            time_str = f"`{bh:02d}:{bm:02d}–{eh:02d}:{em:02d}` │ "
 
-        room_str = f" • {esc_md(room)}" if room else ""
-        res += f"{esc_md(num)} │ {time_str}{esc_md(name)}{room_str}\n"
+        emoji_num = NUM_EMOJIS[idx] if idx < len(NUM_EMOJIS) else f"`{num_str}`"
+        room_str = f" • _каб\\. {esc_md(room)}_" if room else ""
+        res += f"{emoji_num} {time_str}*{esc_md(name)}*{room_str}\n"
 
     return res
 
 
 def format_period_grades_message(period_num: int, disciplines: List[Dict[str, Any]]) -> str:
-    res = f"{period_num} четверть\n\n"
+    """Formats quarter grades with average calculation and badges"""
+    res = f"📊 *Оценки за {period_num} четверть*\n\n"
     has_grades = False
 
     for d in disciplines:
@@ -117,26 +131,30 @@ def format_period_grades_message(period_num: int, disciplines: List[Dict[str, An
                 formatted_grades.append(format_grade_badge(g))
 
         grades_str = " • ".join(formatted_grades)
-        avg = round(d.get("average", 0.0), 2)
-        avg_w = round(d.get("averagew", 0.0), 2)
+        avg = round(float(d.get("average", 0.0) or 0.0), 2)
+        avg_w = round(float(d.get("averagew", 0.0) or 0.0), 2)
 
-        res += f"{esc_md(d.get('name', ''))} • {esc_md(avg)} \\(ср\\.взвеш: {esc_md(avg_w)}\\)\n"
+        res += f"📖 *{esc_md(d.get('name', ''))}* • ср: *{esc_md(avg)}* _\\(взвеш: {esc_md(avg_w)}\\)\n"
         res += f"└ {grades_str}\n\n"
 
     if not has_grades:
-        res += "*Нет оценок*"
+        res += "✨ _Оценок за этот период пока нет_"
 
     return res
 
 
 def format_week_grades_message(grades_dict: Dict[str, List[Any]]) -> str:
+    """Formats weekly grades with subject groups and summary counts"""
     if not grades_dict:
-        return "Текущая неделя\n\n*Нет оценок*"
+        return "🗓 *Оценки на этой неделе*\n\n✨ _Оценок на этой неделе пока нет_"
 
-    res = "Текущая неделя\n\n"
+    res = "🗓 *Оценки на этой неделе*\n\n"
+    has_any = False
+
     for name, grades in grades_dict.items():
         if not grades:
             continue
+        has_any = True
         formatted = []
         for g in grades:
             if isinstance(g, list):
@@ -144,59 +162,68 @@ def format_week_grades_message(grades_dict: Dict[str, List[Any]]) -> str:
             else:
                 formatted.append(format_grade_badge(g))
 
-        res += f"{esc_md(name)}\n"
+        res += f"📖 *{esc_md(name)}*\n"
         res += f"└ {' • '.join(formatted)}\n\n"
+
+    if not has_any:
+        res += "✨ _Оценок на этой неделе пока нет_"
 
     return res
 
 
 def format_year_grades_message(year_grades: List[Dict[str, Any]]) -> str:
+    """Formats quarter and yearly final grades with structured column alignment"""
     if not year_grades:
-        return "Четвертные оценки пока отсутствуют"
+        return "📑 *Четвертные и итоговые оценки*\n\n✨ _Четвертные оценки пока отсутствуют_"
 
-    res = "Четвертные оценки\n\n"
+    res = "📑 *Четвертные и итоговые оценки*\n\n"
     for item in year_grades:
         name = item.get("name", "")
         grades = item.get("grades", ["━", "━", "━", "━"])
         year_grade = item.get("yeargrade", "━")
 
         badges = [format_grade_badge(g) for g in grades]
-        res += f"{esc_md(name)}\n"
-        res += f"└ {' • '.join(badges)}   Итог: {format_grade_badge(year_grade)}\n\n"
+        # Quarter markers I, II, III, IV
+        q_str = f"I: {badges[0]} │ II: {badges[1]} │ III: {badges[2]} │ IV: {badges[3]}"
+        res += f"📖 *{esc_md(name)}*\n"
+        res += f"└ {q_str} ➔ *Итог:* {format_grade_badge(year_grade)}\n\n"
 
     return res
 
 
 def format_calls_message() -> str:
+    """Formats bell schedule with break durations"""
     return (
         "🔔 *Расписание звонков*\n\n"
-        "1 │ 8:30 — 9:10\n"
-        "2 │ 9:20 — 10:00\n"
-        "3 │ 10:20 — 11:00\n"
-        "4 │ 11:20 — 12:00\n"
-        "5 │ 12:20 — 13:00\n"
-        "6 │ 13:10 — 13:50\n"
-        "7 │ 14:05 — 14:45\n"
-        "8 │ 14:55 — 15:35"
+        "1️⃣ │ `08:30 — 09:10`\n"
+        "2️⃣ │ `09:20 — 10:00` _\\(перемена 20 мин\\)_\n"
+        "3️⃣ │ `10:20 — 11:00` _\\(перемена 20 мин\\)_\n"
+        "4️⃣ │ `11:20 — 12:00` _\\(перемена 20 мин\\)_\n"
+        "5️⃣ │ `12:20 — 13:00`\n"
+        "6️⃣ │ `13:10 — 13:50`\n"
+        "7️⃣ │ `14:05 — 14:45`\n"
+        "8️⃣ │ `14:55 — 15:35`"
     )
 
 
 def format_help_message() -> str:
+    """Formats structured help message with emojis and categories"""
     return (
-        "🛠 *Сервис*\n"
-        "/login • Регистрация и подключение\n"
-        "/help • Это меню справки\n"
-        "/profile • Информация об аккаунте\n"
-        "/delacc • Удалить аккаунт из бота\n\n"
+        "🎓 *Телеграм\\-бот «Школьный дневник»*\n\n"
+        "🛠 *Аккаунт и сервис*\n"
+        "• /login — Подключение и вход через Дневник\n"
+        "• /profile — Профиль ученика и школа\n"
+        "• /help — Справка и команды\n"
+        "• /delacc — Удалить аккаунт из бота\n\n"
         "📅 *Расписание*\n"
-        "/all • Расписание на любой день недели\n"
-        "/today • Расписание на сегодня\n"
-        "/nextday • Расписание на завтра\n"
-        "/calls • Расписание звонков\n\n"
-        "📋 *Оценки*\n"
-        "/grades • Все оценки и четверти\n"
-        "/wgrades • Оценки на этой неделе\n"
-        "/pgrades • Четвертные оценки\n\n"
+        "• /today — Расписание на сегодня\n"
+        "• /nextday — Расписание на завтра\n"
+        "• /all — Выбор любого дня недели\n"
+        "• /calls — Расписание звонков\n\n"
+        "📊 *Оценки*\n"
+        "• /wgrades — Оценки на этой неделе\n"
+        "• /pgrades — Четвертные и итоговые оценки\n"
+        "• /grades — Меню выбора четверти\n\n"
         "✍️ *Домашнее задание*\n"
-        "/homework • Домашнее задание по дням"
+        "• /homework — Домашнее задание с перелистыванием дат"
     )

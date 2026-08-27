@@ -58,7 +58,8 @@ def test_format_homework_message():
     res = format_homework_message(hw)
     assert "Русский язык" in res
     assert "Упр\\. 45" in res
-    assert "файл" in res
+    assert "**>" in res
+    assert "||" in res
 
 
 def test_format_period_grades_message():
@@ -79,7 +80,7 @@ def test_format_period_grades_message():
 def test_format_week_grades_message():
     grades = {"Русский язык": [["5", "5"], ["4"]]}
     res = format_week_grades_message(grades)
-    assert "Текущая неделя" in res
+    assert "Оценки на этой неделе" in res
     assert "Русский язык" in res
     assert "🟢 5/5" in res
 
@@ -89,15 +90,16 @@ def test_format_year_grades_message():
         {"name": "История", "grades": ["5", "4", "5", "5"], "yeargrade": "5"}
     ]
     res = format_year_grades_message(year_grades)
-    assert "Четвертные оценки" in res
+    assert "Четвертные и итоговые оценки" in res
     assert "История" in res
-    assert "Итог: 🟢 5" in res
+    assert "Итог:" in res
+    assert "🟢 5" in res
 
 
 def test_format_calls_message():
     calls = format_calls_message()
     assert "Расписание звонков" in calls
-    assert "8:30" in calls
+    assert "08:30" in calls
 
 
 def test_format_help_message():

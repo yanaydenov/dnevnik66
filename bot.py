@@ -395,19 +395,26 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
 # -------------------------------------------------------------
 
 def build_hw_keyboard(pagination: dict) -> InlineKeyboardMarkup:
-    buttons = []
     prev_date = pagination.get("previousDate")
     next_date = pagination.get("nextDate")
 
-    row = []
-    if prev_date and prev_date != "0001-01-01":
-        row.append(InlineKeyboardButton(text="◀️", callback_data=f"hw{prev_date}"))
-    if next_date and next_date != "0001-01-01":
-        row.append(InlineKeyboardButton(text="▶️", callback_data=f"hw{next_date}"))
+    has_prev = bool(prev_date and prev_date != "0001-01-01")
+    has_next = bool(next_date and next_date != "0001-01-01")
 
-    if row:
-        buttons.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    row = []
+    if has_prev:
+        row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"hw{prev_date}"))
+    else:
+        row.append(InlineKeyboardButton(text="🚫", callback_data="hwnoop"))
+
+    row.append(InlineKeyboardButton(text="📅 Сегодня", callback_data="hwtoday"))
+
+    if has_next:
+        row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"hw{next_date}"))
+    else:
+        row.append(InlineKeyboardButton(text="🚫", callback_data="hwnoop"))
+
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 @dp.message(Command("homework"))
@@ -514,14 +521,24 @@ async def handle_callback_query(query: CallbackQuery):
             await query.message.answer("Не удалось получить четвертные оценки.")
 
     elif data.startswith("hw"):
-        date_str = data[2:]
+        code = data[2:]
+        if code == "noop":
+            await query.answer("Дальше заданий нет", show_alert=False)
+            return
+
+        date_str = None if code == "today" else code
         try:
             hw_data = await client.homework(date_str)
             text = format_homework_message(hw_data)
             kb = build_hw_keyboard(hw_data.get("pages", {}))
-            await query.message.edit_text(text, reply_markup=kb, parse_mode="MarkdownV2")
+            try:
+                await query.message.edit_text(text, reply_markup=kb, parse_mode="MarkdownV2")
+            except Exception:
+                pass
         except Exception as e:
-            logger.error(f"HW edit error: {e}")
+            logger.error(f"HW navigation error: {e}")
+            await query.answer("Не удалось загрузить ДЗ на эту дату")
+            return
 
     await query.answer()
 
