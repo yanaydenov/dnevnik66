@@ -244,6 +244,37 @@ async def send_login_prompt(bot: Bot, chat_id: int):
     )
 
 
+async def handle_unauthorized_user(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
+    """Clears expired user tokens from database and sends a clear re-login prompt"""
+    logger.info(f"Clearing expired tokens for user {user_id} and sending re-login prompt")
+    await db.delete_tokens(user_id)
+
+    blocks = [
+        {"type": "heading", "text": "🔒 Сессия истекла", "size": 1},
+        {"type": "divider"},
+        {"type": "paragraph", "text": "Срок действия авторизации в электронном дневнике истек. Пожалуйста, выполните повторный вход 👇"},
+        {"type": "divider"},
+        {"type": "buttons", "buttons": [
+            {"type": "web_app", "text": "✏️ Войти снова (WebApp)", "url": WEBAPP_URL} if WEBAPP_URL else {"type": "callback", "text": "✏️ Войти снова", "callback_data": "reg"}
+        ]}
+    ]
+    fallback = "🔒 Сессия истекла. Пожалуйста, выполните вход заново (/login)."
+
+    try:
+        await bot.send_message(chat_id=chat_id, text="Сессия завершена.", reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        pass
+
+    if message_id:
+        try:
+            await edit_rich_msg(bot, chat_id, message_id, blocks, fallback)
+            return
+        except Exception:
+            pass
+
+    await send_rich_msg(bot, chat_id, blocks, fallback)
+
+
 async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
     client = await get_client(user_id)
     if not client:
@@ -252,20 +283,22 @@ async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Opt
 
     try:
         await client.init_ids()
+        study_periods = client.get_study_periods()
+        is_semester = client.is_semester_system()
+        active_year = client.school_year or "текущий"
+
+        blocks = rf.rich_grades_menu(study_periods, is_semester, active_year)
+        fallback = "📊 Выберите период для просмотра оценок:"
+
+        if message_id:
+            await edit_rich_msg(bot, chat_id, message_id, blocks, fallback)
+        else:
+            await send_rich_msg(bot, chat_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=message_id)
     except Exception as e:
-        logger.warning(f"Could not init ids in send_grades_menu: {e}")
-
-    study_periods = client.get_study_periods()
-    is_semester = client.is_semester_system()
-    active_year = client.school_year or "текущий"
-
-    blocks = rf.rich_grades_menu(study_periods, is_semester, active_year)
-    fallback = "📊 Выберите период для просмотра оценок:"
-
-    if message_id:
-        await edit_rich_msg(bot, chat_id, message_id, blocks, fallback)
-    else:
-        await send_rich_msg(bot, chat_id, blocks, fallback)
+        logger.error(f"Error in send_grades_menu: {e}")
+        await bot.send_message(chat_id, text="Не удалось загрузить меню оценок.")
 
 
 async def send_year_selection(bot: Bot, user_id: int, chat_id: int, message_id: Optional[int] = None):
@@ -284,9 +317,11 @@ async def send_year_selection(bot: Bot, user_id: int, chat_id: int, message_id: 
             await edit_rich_msg(bot, chat_id, message_id, blocks, fallback)
         else:
             await send_rich_msg(bot, chat_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=message_id)
     except Exception as e:
         logger.error(f"Error fetching school years: {e}")
-        await bot.send_message(chat_id, text="Не удалось загрузить список учебных лет.")
+        await bot.send_message(chat_id=chat_id, text="Не удалось загрузить список учебных лет.")
 
 
 # -------------------------------------------------------------
@@ -311,6 +346,9 @@ async def cmd_start(message: Message):
             try:
                 p = await client.profile()
                 student_name = p.get("firstName", "")
+            except DnevnikUnauthorizedError:
+                await handle_unauthorized_user(message.bot, user_id, message.chat.id)
+                return
             except Exception:
                 pass
         reply_kb = await get_reply_keyboard(user_id)
@@ -422,6 +460,8 @@ async def cmd_profile(message: Message):
         blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=notify_enabled)
         fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')} ({p.get('className', '')})\n🏫 {p.get('orgName', '')}\n📅 Год: {active_year}"
         await send_rich_msg(message.bot, message.chat.id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(message.bot, user_id, message.chat.id)
     except Exception as e:
         logger.error(f"Profile error: {e}")
         await message.answer("Не удалось получить данные профиля.")
@@ -459,6 +499,7 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
         await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
+    msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
     try:
         schedule_data = await client.schedule(day_idx)
         blocks = rf.rich_schedule(day_idx, schedule_data)
@@ -468,6 +509,8 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback)
         else:
             await send_rich_msg(bot, chat_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=msg_id)
     except Exception as e:
         logger.error(f"Schedule error: {e}")
         await bot.send_message(chat_id, "Не удалось загрузить расписание.")
@@ -511,7 +554,8 @@ async def cmd_grades(message: Message):
 @dp.message(Command("wgrades"))
 @dp.message(F.text.contains("на этой неделе"))
 async def cmd_wgrades(message: Message):
-    client = await get_client(message.from_user.id)
+    user_id = message.from_user.id
+    client = await get_client(user_id)
     if not client:
         await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
@@ -521,7 +565,9 @@ async def cmd_wgrades(message: Message):
         gr = await client.grades_week()
         blocks = rf.rich_week_grades(gr, is_semester=client.is_semester_system())
         fallback = format_week_grades_message(gr)
-        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback)
+        await send_rich_msg(message.bot, user_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(message.bot, user_id, message.chat.id)
     except Exception as e:
         logger.error(f"Week grades error: {e}")
         await message.answer("Не удалось получить оценки за неделю.")
@@ -529,7 +575,8 @@ async def cmd_wgrades(message: Message):
 
 @dp.message(Command("pgrades"))
 async def cmd_pgrades(message: Message):
-    client = await get_client(message.from_user.id)
+    user_id = message.from_user.id
+    client = await get_client(user_id)
     if not client:
         await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
@@ -539,7 +586,9 @@ async def cmd_pgrades(message: Message):
         year_grades = await client.grades_year()
         blocks = rf.rich_year_grades(year_grades)
         fallback = format_year_grades_message(year_grades)
-        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback)
+        await send_rich_msg(message.bot, user_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(message.bot, user_id, message.chat.id)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
         await message.answer("Не удалось получить итоговые оценки.")
@@ -555,6 +604,7 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
         await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
+    msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
     try:
         period_data = await client.grades_period(period_idx)
         blocks = rf.rich_period_grades(period_data)
@@ -564,6 +614,8 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback)
         else:
             await send_rich_msg(bot, chat_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=msg_id)
     except Exception as e:
         logger.error(f"Period grades error: {e}")
         await bot.send_message(chat_id, "Не удалось получить оценки за период.")
@@ -579,6 +631,7 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
         await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
+    msg_id = message_or_query.message.message_id if isinstance(message_or_query, CallbackQuery) and edit_in_place else None
     try:
         year_grades = await client.grades_year()
         blocks = rf.rich_year_grades(year_grades)
@@ -588,6 +641,8 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback)
         else:
             await send_rich_msg(bot, chat_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=msg_id)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
         await bot.send_message(chat_id, "Не удалось получить итоговые оценки.")
@@ -600,7 +655,8 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
 @dp.message(Command("homework"))
 @dp.message(F.text.contains("Домашние"))
 async def cmd_homework(message: Message):
-    client = await get_client(message.from_user.id)
+    user_id = message.from_user.id
+    client = await get_client(user_id)
     if not client:
         await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
@@ -609,7 +665,9 @@ async def cmd_homework(message: Message):
         hw_data = await client.homework(None)
         blocks = rf.rich_homework(hw_data)
         fallback = format_homework_message(hw_data)
-        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback)
+        await send_rich_msg(message.bot, user_id, blocks, fallback)
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(message.bot, user_id, message.chat.id)
     except Exception as e:
         logger.error(f"Homework error: {e}")
         await message.answer("Не удалось загрузить домашнее задание.")
@@ -627,225 +685,242 @@ async def handle_callback_query(query: CallbackQuery):
     bot = query.bot
     client = await get_client(user_id)
 
-    if data == "reg":
-        await send_login_prompt(bot, chat_id)
-        await query.answer()
-        return
+    try:
+        if data == "reg":
+            await send_login_prompt(bot, chat_id)
+            await query.answer()
+            return
 
-    if data == "help":
-        await send_rich_msg(bot, chat_id, rf.rich_help(), format_help_message())
-        await query.answer()
-        return
+        if data == "help":
+            await send_rich_msg(bot, chat_id, rf.rich_help(), format_help_message())
+            await query.answer()
+            return
 
-    if data == "today_quick":
-        day_idx = datetime.now().weekday()
-        if day_idx == 6:
-            day_idx = 0
-        await send_schedule_day(query, day_idx)
-        await query.answer()
-        return
+        if data == "today_quick":
+            day_idx = datetime.now().weekday()
+            if day_idx == 6:
+                day_idx = 0
+            await send_schedule_day(query, day_idx)
+            await query.answer()
+            return
 
-    if data == "nextday_quick":
-        day_idx = (datetime.now().weekday() + 1) % 7
-        if day_idx == 6:
-            day_idx = 0
-        await send_schedule_day(query, day_idx)
-        await query.answer()
-        return
+        if data == "nextday_quick":
+            day_idx = (datetime.now().weekday() + 1) % 7
+            if day_idx == 6:
+                day_idx = 0
+            await send_schedule_day(query, day_idx)
+            await query.answer()
+            return
 
-    if data == "profile_quick":
-        if client:
-            try:
-                await client.init_ids()
-                p = await client.profile()
-                user = await db.get_user(user_id)
-                meta = (user or {}).get("meta", {})
-                active_year = meta.get("school_year") or client.school_year or "текущий"
-                is_sem = client.is_semester_system()
-                notify_enabled = meta.get("notify_enabled", True)
-                blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=notify_enabled)
-                fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
+        if data == "profile_quick":
+            if client:
+                try:
+                    await client.init_ids()
+                    p = await client.profile()
+                    user = await db.get_user(user_id)
+                    meta = (user or {}).get("meta", {})
+                    active_year = meta.get("school_year") or client.school_year or "текущий"
+                    is_sem = client.is_semester_system()
+                    notify_enabled = meta.get("notify_enabled", True)
+                    blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=notify_enabled)
+                    fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
+                    await send_rich_msg(bot, chat_id, blocks, fallback)
+                except DnevnikUnauthorizedError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Profile error: {e}")
+            await query.answer()
+            return
+
+        if data == "toggle_notify":
+            user = await db.get_user(user_id)
+            if user and client:
+                try:
+                    meta = user.get("meta", {})
+                    current_state = meta.get("notify_enabled", True)
+                    meta["notify_enabled"] = not current_state
+                    await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
+                    status_text = "включены" if meta["notify_enabled"] else "отключены"
+                    await query.answer(f"🔔 Уведомления {status_text}!")
+
+                    await client.init_ids()
+                    p = await client.profile()
+                    active_year = meta.get("school_year") or client.school_year or "текущий"
+                    is_sem = client.is_semester_system()
+                    blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=meta["notify_enabled"])
+                    fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
+                    await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
+                except DnevnikUnauthorizedError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Toggle notify error: {e}")
+            await query.answer()
+            return
+
+        if data == "calls_quick":
+            await send_rich_msg(bot, chat_id, rf.rich_calls(), format_calls_message())
+            await query.answer()
+            return
+
+        if data == "grades_menu":
+            await send_grades_menu(bot, user_id, chat_id)
+            await query.answer()
+            return
+
+        if data == "hw_quick":
+            if client:
+                hw_data = await client.homework(None)
+                blocks = rf.rich_homework(hw_data)
+                fallback = format_homework_message(hw_data)
                 await send_rich_msg(bot, chat_id, blocks, fallback)
-            except Exception as e:
-                logger.error(f"Profile error: {e}")
-        await query.answer()
-        return
+            await query.answer()
+            return
 
-    if data == "toggle_notify":
-        user = await db.get_user(user_id)
-        if user and client:
-            try:
-                meta = user.get("meta", {})
-                current_state = meta.get("notify_enabled", True)
-                meta["notify_enabled"] = not current_state
-                await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
-                status_text = "включены" if meta["notify_enabled"] else "отключены"
-                await query.answer(f"🔔 Уведомления {status_text}!")
-
-                await client.init_ids()
-                p = await client.profile()
-                active_year = meta.get("school_year") or client.school_year or "текущий"
-                is_sem = client.is_semester_system()
-                blocks = rf.rich_profile(p, active_year, is_sem, notify_enabled=meta["notify_enabled"])
-                fallback = f"👤 {p.get('lastName', '')} {p.get('firstName', '')}"
-                await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
-            except Exception as e:
-                logger.error(f"Toggle notify error: {e}")
-        await query.answer()
-        return
-
-    if data == "calls_quick":
-        await send_rich_msg(bot, chat_id, rf.rich_calls(), format_calls_message())
-        await query.answer()
-        return
-
-    if data == "grades_menu":
-        await send_grades_menu(bot, user_id, chat_id)
-        await query.answer()
-        return
-
-    if data == "hw_quick":
-        if client:
-            hw_data = await client.homework(None)
-            blocks = rf.rich_homework(hw_data)
-            fallback = format_homework_message(hw_data)
-            await send_rich_msg(bot, chat_id, blocks, fallback)
-        await query.answer()
-        return
-
-    if data == "deleteacc_prompt":
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="Да, удалить", callback_data="deleteacc1"),
-                    InlineKeyboardButton(text="Нет, отмена", callback_data="deleteacc0"),
-                ]
-            ]
-        )
-        await bot.send_message(chat_id=chat_id, text="Вы действительно хотите удалить аккаунт?", reply_markup=kb)
-        await query.answer()
-        return
-
-    if not client:
-        await bot.send_message(chat_id=chat_id, text="Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
-        await query.answer()
-        return
-
-    if data == "select_year":
-        await send_year_selection(bot, user_id, chat_id, message_id=query.message.message_id)
-
-    elif data.startswith("setyear_"):
-        chosen_year = data.split("_", 1)[1]
-        user = await db.get_user(user_id)
-        if user:
-            meta = user.get("meta", {})
-            meta["school_year"] = chosen_year
-
-            # Try to resolve class name for the chosen year to update reply keyboard
-            try:
-                temp_client = DnevnikClient(user["access_token"], user["refresh_token"], school_year=chosen_year)
-                await temp_client.init_ids()
-                if temp_client.class_name:
-                    meta["className"] = temp_client.class_name
-            except Exception as cls_err:
-                logger.warning(f"Could not resolve class name for year {chosen_year}: {cls_err}")
-
-            await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
-            await query.answer(f"Выбран {chosen_year} учебный год!", show_alert=True)
-
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-
-            reply_kb = await get_reply_keyboard(user_id)
-            cls_info = f" • класс {meta.get('className')}" if meta.get('className') else ""
-            blocks = [
-                {"type": "heading", "text": "✅ Учебный год переключен", "size": 1},
-                {"type": "divider"},
-                {"type": "paragraph", "text": f"Активный учебный год: {chosen_year}{cls_info}\nТеперь расписание, оценки и домашние задания отображаются для этого года."},
-                {"type": "divider"},
-                {"type": "buttons", "buttons": [
-                    {"type": "callback", "text": "🗓 Расписание", "callback_data": "schedule0"},
-                    {"type": "callback", "text": "📋 Оценки", "callback_data": "grades_menu"},
-                    {"type": "callback", "text": "✍️ ДЗ", "callback_data": "hw_quick"},
-                ]}
-            ]
-            fallback = f"✅ Учебный год переключен на {chosen_year}{cls_info}."
-            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=reply_kb)
-
-    elif data == "back_to_grades":
-        await send_grades_menu(bot, user_id, chat_id, message_id=query.message.message_id)
-
-    elif data.startswith("schedule"):
-        day_idx = int(data[-1])
-        # Edit in-place if triggered from inline button
-        await send_schedule_day(query, day_idx, edit_in_place=True)
-
-    elif data.startswith("deleteacc"):
-        if data[-1] == "1":
-            await db.delete_tokens(user_id)
+        if data == "deleteacc_prompt":
             kb = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="✏️ Повторная регистрация", callback_data="reg")]]
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="Да, удалить", callback_data="deleteacc1"),
+                        InlineKeyboardButton(text="Нет, отмена", callback_data="deleteacc0"),
+                    ]
+                ]
             )
-            await bot.send_message(chat_id=chat_id, text="Ваш аккаунт удален", reply_markup=kb)
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-        else:
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-
-    elif data.startswith("pgrades"):
-        period_idx = int(data[-1])
-        await send_period_grades(query, period_idx, edit_in_place=True)
-
-    elif data == "wgrades":
-        try:
-            await client.init_ids()
-            gr = await client.grades_week()
-            blocks = rf.rich_week_grades(gr, is_semester=client.is_semester_system())
-            fallback = format_week_grades_message(gr)
-            await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
-        except Exception as e:
-            logger.error(f"Week grades error: {e}")
-            await bot.send_message(chat_id=chat_id, text="Не удалось получить оценки за неделю.")
-
-    elif data == "ygrades":
-        await send_year_grades(query, edit_in_place=True)
-
-    elif data.startswith("dlfile_"):
-        file_id = data.split("_", 1)[1]
-        await query.answer("⏳ Скачиваю файл...", show_alert=False)
-        try:
-            content, filename = await client.download_file(file_id)
-            doc = BufferedInputFile(content, filename=filename or "homework_file")
-            await bot.send_document(chat_id=chat_id, document=doc, caption=f"📎 {filename}")
-        except Exception as e:
-            logger.error(f"Download file error: {e}")
-            await bot.send_message(chat_id=chat_id, text="Не удалось скачать файл. Возможно, срок его действия истек.")
-
-    elif data.startswith("hw"):
-        code = data[2:]
-        if code == "noop":
-            await query.answer("Дальше заданий нет", show_alert=False)
+            await bot.send_message(chat_id=chat_id, text="Вы действительно хотите удалить аккаунт?", reply_markup=kb)
+            await query.answer()
             return
 
-        date_str = None if code == "today" else code
-        try:
-            hw_data = await client.homework(date_str)
-            blocks = rf.rich_homework(hw_data)
-            fallback = format_homework_message(hw_data)
-            await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
-        except Exception as e:
-            logger.error(f"HW navigation error: {e}")
-            await query.answer("Не удалось загрузить ДЗ на эту дату")
+        if not client:
+            await bot.send_message(chat_id=chat_id, text="Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+            await query.answer()
             return
 
-    await query.answer()
+        if data == "select_year":
+            await send_year_selection(bot, user_id, chat_id, message_id=query.message.message_id)
+
+        elif data.startswith("setyear_"):
+            chosen_year = data.split("_", 1)[1]
+            user = await db.get_user(user_id)
+            if user:
+                meta = user.get("meta", {})
+                meta["school_year"] = chosen_year
+
+                # Try to resolve class name for the chosen year to update reply keyboard
+                try:
+                    temp_client = DnevnikClient(user["access_token"], user["refresh_token"], school_year=chosen_year)
+                    await temp_client.init_ids()
+                    if temp_client.class_name:
+                        meta["className"] = temp_client.class_name
+                except Exception as cls_err:
+                    logger.warning(f"Could not resolve class name for year {chosen_year}: {cls_err}")
+
+                await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
+                await query.answer(f"Выбран {chosen_year} учебный год!", show_alert=True)
+
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+
+                reply_kb = await get_reply_keyboard(user_id)
+                cls_info = f" • класс {meta.get('className')}" if meta.get('className') else ""
+                blocks = [
+                    {"type": "heading", "text": "✅ Учебный год переключен", "size": 1},
+                    {"type": "divider"},
+                    {"type": "paragraph", "text": f"Активный учебный год: {chosen_year}{cls_info}\nТеперь расписание, оценки и домашние задания отображаются для этого года."},
+                    {"type": "divider"},
+                    {"type": "buttons", "buttons": [
+                        {"type": "callback", "text": "🗓 Расписание", "callback_data": "schedule0"},
+                        {"type": "callback", "text": "📋 Оценки", "callback_data": "grades_menu"},
+                        {"type": "callback", "text": "✍️ ДЗ", "callback_data": "hw_quick"},
+                    ]}
+                ]
+                fallback = f"✅ Учебный год переключен на {chosen_year}{cls_info}."
+                await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=reply_kb)
+
+        elif data == "back_to_grades":
+            await send_grades_menu(bot, user_id, chat_id, message_id=query.message.message_id)
+
+        elif data.startswith("schedule"):
+            day_idx = int(data[-1])
+            # Edit in-place if triggered from inline button
+            await send_schedule_day(query, day_idx, edit_in_place=True)
+
+        elif data.startswith("deleteacc"):
+            if data[-1] == "1":
+                await db.delete_tokens(user_id)
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="✏️ Повторная регистрация", callback_data="reg")]]
+                )
+                await bot.send_message(chat_id=chat_id, text="Ваш аккаунт удален", reply_markup=kb)
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+            else:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+
+        elif data.startswith("pgrades"):
+            period_idx = int(data[-1])
+            await send_period_grades(query, period_idx, edit_in_place=True)
+
+        elif data == "wgrades":
+            try:
+                await client.init_ids()
+                gr = await client.grades_week()
+                blocks = rf.rich_week_grades(gr, is_semester=client.is_semester_system())
+                fallback = format_week_grades_message(gr)
+                await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
+            except DnevnikUnauthorizedError:
+                raise
+            except Exception as e:
+                logger.error(f"Week grades error: {e}")
+                await bot.send_message(chat_id=chat_id, text="Не удалось получить оценки за неделю.")
+
+        elif data == "ygrades":
+            await send_year_grades(query, edit_in_place=True)
+
+        elif data.startswith("dlfile_"):
+            file_id = data.split("_", 1)[1]
+            await query.answer("⏳ Скачиваю файл...", show_alert=False)
+            try:
+                content, filename = await client.download_file(file_id)
+                doc = BufferedInputFile(content, filename=filename or "homework_file")
+                await bot.send_document(chat_id=chat_id, document=doc, caption=f"📎 {filename}")
+            except DnevnikUnauthorizedError:
+                raise
+            except Exception as e:
+                logger.error(f"Download file error: {e}")
+                await bot.send_message(chat_id=chat_id, text="Не удалось скачать файл. Возможно, срок его действия истек.")
+
+        elif data.startswith("hw"):
+            code = data[2:]
+            if code == "noop":
+                await query.answer("Дальше заданий нет", show_alert=False)
+                return
+
+            date_str = None if code == "today" else code
+            try:
+                hw_data = await client.homework(date_str)
+                blocks = rf.rich_homework(hw_data)
+                fallback = format_homework_message(hw_data)
+                await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback)
+            except DnevnikUnauthorizedError:
+                raise
+            except Exception as e:
+                logger.error(f"HW navigation error: {e}")
+                await query.answer("Не удалось загрузить ДЗ на эту дату")
+                return
+
+        await query.answer()
+    except DnevnikUnauthorizedError:
+        await handle_unauthorized_user(bot, user_id, chat_id, message_id=query.message.message_id)
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
 
 # -------------------------------------------------------------

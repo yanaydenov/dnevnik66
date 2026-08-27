@@ -92,7 +92,9 @@ async def check_user_grades(bot: Bot, user_id: int) -> None:
         await db.save_tokens(user_id, user["access_token"], user["refresh_token"], meta=meta)
 
     except DnevnikUnauthorizedError:
-        logger.warning(f"User {user_id} unauthorized during grade polling")
+        logger.warning(f"User {user_id} unauthorized during grade polling. Removing tokens and alerting user.")
+        from bot import handle_unauthorized_user
+        await handle_unauthorized_user(bot, user_id, user_id)
     except Exception as e:
         logger.debug(f"Grade check skipped for user {user_id}: {e}")
 
