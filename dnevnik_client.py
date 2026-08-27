@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple, Callable
 from datetime import datetime
 import httpx
-from config import DNEVNIK_API_URL
+from config import DNEVNIK_API_URL, TEST_SCHEDULE_DATE
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,15 @@ class DnevnikClient:
 
         schedule_model = data.get("scheduleModel") or {}
         days = schedule_model.get("days") or []
+
+        # If current week has 0 lessons (e.g. during summer vacation) and no date was explicitly forced, fallback to test week
+        total_lessons = sum(len(d.get("scheduleDayLessonModels") or []) for d in days if isinstance(d, dict))
+        if total_lessons == 0 and not date_str and TEST_SCHEDULE_DATE:
+            params["date"] = TEST_SCHEDULE_DATE
+            fallback_data = await self._request("GET", "/schedule", params=params)
+            if isinstance(fallback_data, dict):
+                schedule_model = fallback_data.get("scheduleModel") or {}
+                days = schedule_model.get("days") or []
 
         if day_idx < len(days):
             target_day = days[day_idx] or {}

@@ -217,6 +217,37 @@ def get_unreg_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def build_schedule_keyboard(selected_day: int) -> InlineKeyboardMarkup:
+    """Builds interactive inline day selector buttons [ Пн | Вт | Ср | Чт | Пт | Сб ]"""
+    days_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
+    row = []
+    for idx, name in enumerate(days_short):
+        text = f"• {name} •" if idx == selected_day else name
+        row.append(InlineKeyboardButton(text=text, callback_data=f"schedule{idx}"))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            row,
+            [InlineKeyboardButton(text="🔔 Расписание звонков", callback_data="calls_quick")]
+        ]
+    )
+
+
+def build_grades_nav_keyboard(selected_period: Optional[int]) -> InlineKeyboardMarkup:
+    """Builds interactive quarter navigation buttons [ 1 ч. | 2 четв | 3 четв | 4 четв | Год ]"""
+    row = []
+    for idx in range(4):
+        text = f"• {idx + 1} ч. •" if selected_period == idx else f"{idx + 1} четв"
+        row.append(InlineKeyboardButton(text=text, callback_data=f"pgrades{idx}"))
+    year_text = "• Год •" if selected_period is None else "Год 📑"
+    row.append(InlineKeyboardButton(text=year_text, callback_data="ygrades"))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            row,
+            [InlineKeyboardButton(text="📋 Оценки на этой неделе", callback_data="wgrades")]
+        ]
+    )
+
+
 async def send_login_prompt(bot: Bot, chat_id: int):
     webapp = WebAppInfo(url=WEBAPP_URL)
     kb = ReplyKeyboardMarkup(
@@ -237,17 +268,15 @@ async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Opt
         await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
-    yr_display = f" (год: {client.school_year})" if client.school_year else ""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Текущая неделя", callback_data="wgrades")],
+            [InlineKeyboardButton(text="📋 Оценки на этой неделе", callback_data="wgrades")],
             [InlineKeyboardButton(text="1 четверть", callback_data="pgrades0"), InlineKeyboardButton(text="2 четверть", callback_data="pgrades1")],
             [InlineKeyboardButton(text="3 четверть", callback_data="pgrades2"), InlineKeyboardButton(text="4 четверть", callback_data="pgrades3")],
-            [InlineKeyboardButton(text="По четвертям (Итог)", callback_data="ygrades")],
-            [InlineKeyboardButton(text="🗓 Сменить учебный год", callback_data="select_year")],
+            [InlineKeyboardButton(text="📑 Итоги по четвертям (Год)", callback_data="ygrades")],
         ]
     )
-    text = f"Выберите период{yr_display}:"
+    text = "📊 Выберите период для просмотра оценок:"
     if message_id:
         try:
             await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=kb)
@@ -271,11 +300,10 @@ async def send_year_selection(bot: Bot, user_id: int, chat_id: int, message_id: 
             y_text = y["text"]
             mark = " ✅" if client.school_year == y_id else ""
             rows.append([InlineKeyboardButton(text=f"📚 {y_text}{mark}", callback_data=f"setyear_{y_id}")])
-        rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_grades")])
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         text = (
             f"📅 Текущий активный учебный год: <b>{client.school_year or 'не задан'}</b>\n\n"
-            "Выберите учебный год для просмотра расписания, оценок и домашних заданий:"
+            "Выберите учебный год для работы бота (расписание, оценки, ДЗ):"
         )
         if message_id:
             try:
@@ -377,22 +405,37 @@ async def handle_webapp_data(message: Message):
 @dp.message(F.text.contains("Список команд"))
 async def cmd_help(message: Message):
     reply_kb = await get_reply_keyboard(message.from_user.id)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗓 Расписание", callback_data="schedule0"),
+                InlineKeyboardButton(text="📋 Оценки", callback_data="grades_menu"),
+                InlineKeyboardButton(text="✍️ ДЗ", callback_data="hw_quick"),
+            ]
+        ]
+    )
     await send_rich_msg(
         bot=message.bot,
         chat_id=message.from_user.id,
         blocks=rf.rich_help(),
         fallback_text=format_help_message(),
-        reply_markup=reply_kb,
+        reply_markup=kb,
     )
 
 
 @dp.message(Command("calls"))
 async def cmd_calls(message: Message):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗓 Расписание уроков", callback_data="schedule0")]
+        ]
+    )
     await send_rich_msg(
         bot=message.bot,
         chat_id=message.from_user.id,
         blocks=rf.rich_calls(),
         fallback_text=format_calls_message(),
+        reply_markup=kb,
     )
 
 
@@ -420,6 +463,7 @@ async def cmd_profile(message: Message):
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🗓 Сменить учебный год", callback_data="select_year")],
+                [InlineKeyboardButton(text="🔔 Расписание звонков", callback_data="calls_quick")],
                 [InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data="deleteacc_prompt")],
             ]
         )
@@ -459,7 +503,7 @@ async def cmd_delacc(message: Message):
 # Schedule Handlers
 # -------------------------------------------------------------
 
-async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: int):
+async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: int, edit_in_place: bool = False):
     user_id = message_or_query.from_user.id
     chat_id = message_or_query.message.chat.id if isinstance(message_or_query, CallbackQuery) else message_or_query.chat.id
     client = await get_client(user_id)
@@ -473,7 +517,12 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
         lessons = await client.schedule(day_idx)
         blocks = rf.rich_schedule(day_idx, lessons)
         fallback = format_schedule_message(day_idx, lessons)
-        await send_rich_msg(bot, chat_id, blocks, fallback)
+        kb = build_schedule_keyboard(day_idx)
+
+        if edit_in_place and isinstance(message_or_query, CallbackQuery):
+            await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback, reply_markup=kb)
+        else:
+            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Schedule error: {e}")
         await bot.send_message(chat_id, "Не удалось загрузить расписание.")
@@ -483,6 +532,8 @@ async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: 
 @dp.message(F.text == "На сегодня")
 async def cmd_today(message: Message):
     day_idx = datetime.now().weekday()
+    if day_idx == 6:
+        day_idx = 0
     await send_schedule_day(message, day_idx)
 
 
@@ -490,25 +541,16 @@ async def cmd_today(message: Message):
 @dp.message(F.text == "На завтра")
 async def cmd_nextday(message: Message):
     day_idx = (datetime.now().weekday() + 1) % 7
+    if day_idx == 6:
+        day_idx = 0
     await send_schedule_day(message, day_idx)
 
 
 @dp.message(Command("all"))
 @dp.message(F.text.startswith("🗓 Расписание"))
 async def cmd_schedule_all(message: Message):
-    client = await get_client(message.from_user.id)
-    if not client:
-        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
-        return
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Понедельник", callback_data="schedule0"), InlineKeyboardButton(text="Вторник", callback_data="schedule1")],
-            [InlineKeyboardButton(text="Среда", callback_data="schedule2"), InlineKeyboardButton(text="Четверг", callback_data="schedule3")],
-            [InlineKeyboardButton(text="Пятница", callback_data="schedule4"), InlineKeyboardButton(text="Суббота", callback_data="schedule5")],
-        ]
-    )
-    await message.answer("Выберите день недели:", reply_markup=kb)
+    # Directly open Monday with interactive day buttons
+    await send_schedule_day(message, 0)
 
 
 # -------------------------------------------------------------
@@ -533,7 +575,8 @@ async def cmd_wgrades(message: Message):
         gr = await client.grades_week()
         blocks = rf.rich_week_grades(gr)
         fallback = format_week_grades_message(gr)
-        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback)
+        kb = build_grades_nav_keyboard(None)
+        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Week grades error: {e}")
         await message.answer("Не удалось получить оценки за неделю.")
@@ -550,14 +593,14 @@ async def cmd_pgrades(message: Message):
         year_grades = await client.grades_year()
         blocks = rf.rich_year_grades(year_grades)
         fallback = format_year_grades_message(year_grades)
-        reply_kb = await get_reply_keyboard(message.from_user.id)
-        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=reply_kb)
+        kb = build_grades_nav_keyboard(None)
+        await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
         await message.answer("Не удалось получить четвертные оценки.")
 
 
-async def send_period_grades(message_or_query: Message | CallbackQuery, period_idx: int):
+async def send_period_grades(message_or_query: Message | CallbackQuery, period_idx: int, edit_in_place: bool = False):
     user_id = message_or_query.from_user.id
     chat_id = message_or_query.message.chat.id if isinstance(message_or_query, CallbackQuery) else message_or_query.chat.id
     client = await get_client(user_id)
@@ -571,11 +614,40 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
         disciplines = await client.grades_period(period_idx)
         blocks = rf.rich_period_grades(period_idx + 1, disciplines)
         fallback = format_period_grades_message(period_idx + 1, disciplines)
-        reply_kb = await get_reply_keyboard(user_id)
-        await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=reply_kb)
+        kb = build_grades_nav_keyboard(period_idx)
+
+        if edit_in_place and isinstance(message_or_query, CallbackQuery):
+            await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback, reply_markup=kb)
+        else:
+            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Period grades error: {e}")
         await bot.send_message(chat_id, "Не удалось получить оценки за четверть.")
+
+
+async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_place: bool = False):
+    user_id = message_or_query.from_user.id
+    chat_id = message_or_query.message.chat.id if isinstance(message_or_query, CallbackQuery) else message_or_query.chat.id
+    client = await get_client(user_id)
+    bot = message_or_query.bot
+
+    if not client:
+        await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        year_grades = await client.grades_year()
+        blocks = rf.rich_year_grades(year_grades)
+        fallback = format_year_grades_message(year_grades)
+        kb = build_grades_nav_keyboard(None)
+
+        if edit_in_place and isinstance(message_or_query, CallbackQuery):
+            await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback, reply_markup=kb)
+        else:
+            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Year grades error: {e}")
+        await bot.send_message(chat_id, "Не удалось получить четвертные оценки.")
 
 
 # -------------------------------------------------------------
@@ -642,8 +714,41 @@ async def handle_callback_query(query: CallbackQuery):
         return
 
     if data == "help":
-        reply_kb = await get_reply_keyboard(user_id)
-        await send_rich_msg(bot, chat_id, rf.rich_help(), format_help_message(), reply_markup=reply_kb)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🗓 Расписание", callback_data="schedule0"),
+                    InlineKeyboardButton(text="📋 Оценки", callback_data="grades_menu"),
+                    InlineKeyboardButton(text="✍️ ДЗ", callback_data="hw_quick"),
+                ]
+            ]
+        )
+        await send_rich_msg(bot, chat_id, rf.rich_help(), format_help_message(), reply_markup=kb)
+        await query.answer()
+        return
+
+    if data == "calls_quick":
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🗓 Расписание уроков", callback_data="schedule0")]
+            ]
+        )
+        await send_rich_msg(bot, chat_id, rf.rich_calls(), format_calls_message(), reply_markup=kb)
+        await query.answer()
+        return
+
+    if data == "grades_menu":
+        await send_grades_menu(bot, user_id, chat_id)
+        await query.answer()
+        return
+
+    if data == "hw_quick":
+        if client:
+            hw_data = await client.homework(None)
+            blocks = rf.rich_homework(hw_data)
+            fallback = format_homework_message(hw_data)
+            kb = build_hw_keyboard(hw_data.get("pages", {}))
+            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
         await query.answer()
         return
 
@@ -706,11 +811,8 @@ async def handle_callback_query(query: CallbackQuery):
 
     elif data.startswith("schedule"):
         day_idx = int(data[-1])
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await send_schedule_day(query, day_idx)
+        # Edit in-place if triggered from inline button
+        await send_schedule_day(query, day_idx, edit_in_place=True)
 
     elif data.startswith("deleteacc"):
         if data[-1] == "1":
@@ -731,40 +833,21 @@ async def handle_callback_query(query: CallbackQuery):
 
     elif data.startswith("pgrades"):
         period_idx = int(data[-1])
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await send_period_grades(query, period_idx)
+        await send_period_grades(query, period_idx, edit_in_place=True)
 
     elif data == "wgrades":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
         try:
             gr = await client.grades_week()
             blocks = rf.rich_week_grades(gr)
             fallback = format_week_grades_message(gr)
-            await send_rich_msg(bot, chat_id, blocks, fallback)
+            kb = build_grades_nav_keyboard(None)
+            await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback, reply_markup=kb)
         except Exception as e:
             logger.error(f"Week grades error: {e}")
             await bot.send_message(chat_id=chat_id, text="Не удалось получить оценки за неделю.")
 
     elif data == "ygrades":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        try:
-            year_grades = await client.grades_year()
-            blocks = rf.rich_year_grades(year_grades)
-            fallback = format_year_grades_message(year_grades)
-            reply_kb = await get_reply_keyboard(user_id)
-            await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=reply_kb)
-        except Exception as e:
-            logger.error(f"Year grades error: {e}")
-            await bot.send_message(chat_id=chat_id, text="Не удалось получить четвертные оценки.")
+        await send_year_grades(query, edit_in_place=True)
 
     elif data.startswith("hw"):
         code = data[2:]
@@ -796,7 +879,7 @@ async def set_my_commands(bot: Bot):
         BotCommand(command="start", description="🏠 Запустить бота"),
         BotCommand(command="today", description="📅 Расписание на сегодня"),
         BotCommand(command="nextday", description="📅 Расписание на завтра"),
-        BotCommand(command="all", description="🗓 Расписание на любой день"),
+        BotCommand(command="all", description="🗓 Расписание уроков (выбор дня)"),
         BotCommand(command="grades", description="📋 Все оценки"),
         BotCommand(command="wgrades", description="📋 Оценки на этой неделе"),
         BotCommand(command="pgrades", description="📋 Оценки по четвертям"),
