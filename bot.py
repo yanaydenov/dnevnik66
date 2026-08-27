@@ -223,12 +223,6 @@ async def get_reply_keyboard(telegram_id: int) -> ReplyKeyboardMarkup | ReplyKey
 
 
 def get_unreg_keyboard() -> InlineKeyboardMarkup:
-    if WEBAPP_URL:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="✏️ Войти через WebApp", web_app=WebAppInfo(url=WEBAPP_URL))]
-            ]
-        )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Войти", callback_data="reg")]
@@ -985,7 +979,7 @@ async def main():
     # Start WebApp static server if enabled
     if ENABLE_WEBAPP_SERVER:
         try:
-            await run_webapp_server(host=WEBAPP_HOST, port=WEBAPP_PORT, bot=bot)
+            await run_webapp_server(host=WEBAPP_HOST, port=WEBAPP_PORT)
         except Exception as e:
             logger.error(f"Failed to start WebApp server: {e}")
 
