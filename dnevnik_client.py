@@ -39,6 +39,7 @@ class DnevnikClient:
         self.class_id: Optional[str] = None
         self.class_name: Optional[str] = None
         self.school_year: Optional[str] = str(school_year).strip() if school_year else None
+        self.periods: List[Dict[str, str]] = []
         self.periods_ids: List[str] = []
         self._cached_profile: Optional[Dict[str, Any]] = None
 
@@ -231,8 +232,9 @@ class DnevnikClient:
                     self.school_year = yr
                     self.class_id = class_id
                     self.class_name = class_name
-                    self.periods_ids = [p["id"] for p in periods if isinstance(p, dict) and "id" in p]
-                    logger.info(f"Initialized grades context: year={yr}, classId={class_id}, className={class_name}, periods count={len(self.periods_ids)}")
+                    self.periods = [{"id": str(p["id"]), "name": str(p.get("name") or "")} for p in periods if isinstance(p, dict) and "id" in p]
+                    self.periods_ids = [p["id"] for p in self.periods]
+                    logger.info(f"Initialized grades context: year={yr}, classId={class_id}, className={class_name}, periods count={len(self.periods)}")
                     return
             except Exception as e:
                 last_error = e
@@ -242,6 +244,20 @@ class DnevnikClient:
         if last_error:
             raise last_error
         raise DnevnikHttpError("Не удалось определить учебный период или класс ученика")
+
+    def get_study_periods(self) -> List[Dict[str, str]]:
+        """Returns study periods (e.g. 1-4 quarters or 1-2 semesters) excluding summary rows"""
+        result = []
+        for p in self.periods:
+            name = p.get("name", "").strip()
+            if name and name not in ("Текущая неделя", "Итоговые оценки"):
+                result.append(p)
+        return result
+
+    def is_semester_system(self) -> bool:
+        """Determines if the student's class uses semesters (полугодия) instead of quarters (четверти)"""
+        study_periods = self.get_study_periods()
+        return any("полугодие" in p.get("name", "").lower() for p in study_periods) or len(study_periods) == 2
 
     async def profile(self) -> Dict[str, Any]:
         """Returns student profile dictionary"""
@@ -372,15 +388,21 @@ class DnevnikClient:
                     res[name] = list(grades)
         return res
 
-    async def grades_period(self, period_idx: int, school_year: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Returns grades list for a quarter/period (0=1st quarter, 1=2nd quarter, ...)"""
+    async def grades_period(self, period_idx: int, school_year: Optional[str] = None) -> Dict[str, Any]:
+        """Returns grades dictionary for a quarter/semester"""
         await self.init_ids(forced_year=school_year)
-        if len(self.periods_ids) >= 6:
-            target_period_id = self.periods_ids[period_idx + 2] if (period_idx + 2) < len(self.periods_ids) else self.periods_ids[-1]
+        study_periods = self.get_study_periods()
+        is_semester = self.is_semester_system()
+
+        if period_idx < len(study_periods):
+            target_period = study_periods[period_idx]
+            target_period_id = target_period["id"]
+            period_name = target_period.get("name") or (f"{period_idx + 1} полугодие" if is_semester else f"{period_idx + 1} четверть")
         elif len(self.periods_ids) > 0:
-            target_period_id = self.periods_ids[period_idx] if period_idx < len(self.periods_ids) else self.periods_ids[-1]
+            target_period_id = self.periods_ids[-1]
+            period_name = "Период"
         else:
-            return []
+            return {"period_name": "Период", "is_semester": is_semester, "disciplines": []}
 
         data = await self._request("GET", "/estimate", params={
             "schoolYear": self.school_year,
@@ -391,7 +413,7 @@ class DnevnikClient:
         })
 
         if not isinstance(data, dict):
-            return []
+            return {"period_name": period_name, "is_semester": is_semester, "disciplines": []}
 
         period_table = data.get("periodGradesTable") or {}
         disciplines = period_table.get("disciplines") or []
@@ -415,15 +437,26 @@ class DnevnikClient:
                 "averagew": disc.get("averageWeightedGrade") or 0.0,
                 "grades": all_grades,
             })
-        return res
+        return {
+            "period_name": period_name,
+            "period_idx": period_idx,
+            "is_semester": is_semester,
+            "disciplines": res,
+        }
 
-    async def grades_year(self, school_year: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Returns year grades per subject with 4 quarter grades and final mark"""
+    async def grades_year(self, school_year: Optional[str] = None) -> Dict[str, Any]:
+        """Returns year grades per subject with quarter/semester grades and final mark"""
         await self.init_ids(forced_year=school_year)
         if len(self.periods_ids) < 2:
-            return []
+            return {"is_semester": False, "period_type": "четвертям", "columns": ["I", "II", "III", "IV"], "disciplines": []}
 
-        year_period_id = self.periods_ids[1] if len(self.periods_ids) >= 2 else self.periods_ids[0]
+        is_semester = self.is_semester_system()
+        needed_count = 2 if is_semester else 4
+
+        year_period_id = next((p["id"] for p in self.periods if "итоговые" in p.get("name", "").lower()), None)
+        if not year_period_id:
+            year_period_id = self.periods_ids[1] if len(self.periods_ids) >= 2 else self.periods_ids[0]
+
         data = await self._request("GET", "/estimate", params={
             "schoolYear": self.school_year,
             "classId": self.class_id,
@@ -433,7 +466,12 @@ class DnevnikClient:
         })
 
         if not isinstance(data, dict):
-            return []
+            return {
+                "is_semester": is_semester,
+                "period_type": "полугодиям" if is_semester else "четвертям",
+                "columns": ["I", "II"] if is_semester else ["I", "II", "III", "IV"],
+                "disciplines": []
+            }
 
         year_table = data.get("yearGradesTable") or {}
         lesson_grades = year_table.get("lessonGrades") or []
@@ -443,21 +481,26 @@ class DnevnikClient:
                 continue
             lesson = item.get("lesson") or {}
             lesson_name = lesson.get("name") if isinstance(lesson, dict) else item.get("name") or ""
-            quarter_grades = []
+            period_grades = []
             for g in (item.get("grades") or []):
                 if isinstance(g, dict):
-                    quarter_grades.append(g.get("finallygrade") or g.get("finallyGrade") or "━")
+                    period_grades.append(g.get("finallygrade") or g.get("finallyGrade") or "━")
                 elif g is not None:
-                    quarter_grades.append(str(g))
+                    period_grades.append(str(g))
 
-            # Pad to 4 quarters if less
-            while len(quarter_grades) < 4:
-                quarter_grades.append("━")
+            # Pad to 2 or 4 periods
+            while len(period_grades) < needed_count:
+                period_grades.append("━")
 
             year_grade = item.get("yearGrade") or item.get("finallyGrade") or item.get("finallygrade") or "━"
             res.append({
                 "name": lesson_name,
-                "grades": quarter_grades[:4],
+                "grades": period_grades[:needed_count],
                 "yeargrade": year_grade,
             })
-        return res
+        return {
+            "is_semester": is_semester,
+            "period_type": "полугодиям" if is_semester else "четвертям",
+            "columns": ["I", "II"] if is_semester else ["I", "II", "III", "IV"],
+            "disciplines": res,
+        }

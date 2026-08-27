@@ -71,10 +71,15 @@ def test_format_period_grades_message():
             "averagew": 4.75,
         }
     ]
-    res = format_period_grades_message(1, disciplines)
-    assert "1 четверть" in res
-    assert "Алгебра" in res
-    assert "🟢 5" in res
+    # Quarter test
+    res_q = format_period_grades_message(1, disciplines, is_semester=False)
+    assert "1 четверть" in res_q
+    assert "Алгебра" in res_q
+    assert "🟢 5" in res_q
+
+    # Semester test
+    res_s = format_period_grades_message({"period_name": "1 Полугодие", "disciplines": disciplines})
+    assert "1 Полугодие" in res_s
 
 
 def test_format_week_grades_message():
@@ -86,14 +91,26 @@ def test_format_week_grades_message():
 
 
 def test_format_year_grades_message():
-    year_grades = [
+    # Quarter test
+    year_grades_q = [
         {"name": "История", "grades": ["5", "4", "5", "5"], "yeargrade": "5"}
     ]
-    res = format_year_grades_message(year_grades)
-    assert "Четвертные и итоговые оценки" in res
-    assert "История" in res
-    assert "Итог:" in res
-    assert "🟢 5" in res
+    res_q = format_year_grades_message(year_grades_q, is_semester=False)
+    assert "четвертям" in res_q
+    assert "История" in res_q
+    assert "Итог:" in res_q
+    assert "🟢 5" in res_q
+
+    # Semester test
+    year_grades_s = {
+        "is_semester": True,
+        "disciplines": [
+            {"name": "История", "grades": ["5", "4"], "yeargrade": "5"}
+        ]
+    }
+    res_s = format_year_grades_message(year_grades_s)
+    assert "полугодиям" in res_s
+    assert "I: 🟢 5 │ II: 🟢 4" in res_s
 
 
 def test_format_calls_message():

@@ -92,13 +92,28 @@ def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
     return blocks
 
 
-def rich_period_grades(period_num: int, disciplines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Generates Telegram Rich Message blocks with native Table for quarter grades"""
+def rich_period_grades(
+    period: Union[int, str, Dict[str, Any]],
+    disciplines: Optional[List[Dict[str, Any]]] = None,
+    is_semester: bool = False,
+) -> List[Dict[str, Any]]:
+    """Generates Telegram Rich Message blocks with native Table for quarter or semester grades"""
+    if isinstance(period, dict):
+        period_title = period.get("period_name") or f"Период {period.get('period_idx', 0) + 1}"
+        disciplines = period.get("disciplines") or []
+        is_semester = period.get("is_semester", is_semester)
+    elif isinstance(period, int):
+        period_word = "полугодие" if is_semester else "четверть"
+        period_title = f"{period} {period_word}"
+    else:
+        period_title = str(period)
+
     blocks: List[Dict[str, Any]] = [
-        {"type": "heading", "text": f"📊 Оценки за {period_num} четверть", "size": 1},
+        {"type": "heading", "text": f"📊 Оценки за {period_title}", "size": 1},
         {"type": "divider"},
     ]
 
+    disciplines = disciplines or []
     has_grades = False
     table_cells: List[List[Dict[str, str]]] = [
         [_cell("Предмет"), _cell("Оценки"), _cell("Ср."), _cell("Взвеш.")]
@@ -184,38 +199,65 @@ def rich_week_grades(grades_dict: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
     return blocks
 
 
-def rich_year_grades(year_grades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Generates Telegram Rich Message blocks with native Table for quarter and final grades"""
+def rich_year_grades(
+    year_grades: Union[List[Dict[str, Any]], Dict[str, Any]],
+    is_semester: bool = False
+) -> List[Dict[str, Any]]:
+    """Generates Telegram Rich Message blocks with native Table for quarter/semester and final grades"""
+    if isinstance(year_grades, dict):
+        items = year_grades.get("disciplines") or year_grades.get("items") or []
+        is_semester = year_grades.get("is_semester", is_semester)
+    else:
+        items = year_grades
+
+    period_type_label = "полугодиям" if is_semester else "четвертям"
     blocks: List[Dict[str, Any]] = [
-        {"type": "heading", "text": "📑 Четвертные и итоговые оценки", "size": 1},
+        {"type": "heading", "text": f"📑 Оценки по {period_type_label} и итог", "size": 1},
         {"type": "divider"},
     ]
 
-    if not year_grades:
-        blocks.append({"type": "paragraph", "text": "✨ Четвертные оценки пока отсутствуют"})
+    if not items:
+        blocks.append({"type": "paragraph", "text": f"✨ Оценки по {period_type_label} пока отсутствуют"})
         return blocks
 
-    # Table columns: Предмет | I | II | III | IV | Итог
-    table_cells: List[List[Dict[str, str]]] = [
-        [_cell("Предмет"), _cell("I"), _cell("II"), _cell("III"), _cell("IV"), _cell("Год")]
-    ]
+    if is_semester:
+        table_cells: List[List[Dict[str, str]]] = [
+            [_cell("Предмет"), _cell("I"), _cell("II"), _cell("Год")]
+        ]
+        for item in items:
+            name = item.get("name", "")
+            grades = list(item.get("grades", ["━", "━"]))
+            year_grade = item.get("yeargrade", "━")
 
-    for item in year_grades:
-        name = item.get("name", "")
-        grades = item.get("grades", ["━", "━", "━", "━"])
-        year_grade = item.get("yeargrade", "━")
+            while len(grades) < 2:
+                grades.append("━")
 
-        while len(grades) < 4:
-            grades.append("━")
+            table_cells.append([
+                _cell(name),
+                _cell(grades[0]),
+                _cell(grades[1]),
+                _cell(year_grade)
+            ])
+    else:
+        table_cells: List[List[Dict[str, str]]] = [
+            [_cell("Предмет"), _cell("I"), _cell("II"), _cell("III"), _cell("IV"), _cell("Год")]
+        ]
+        for item in items:
+            name = item.get("name", "")
+            grades = list(item.get("grades", ["━", "━", "━", "━"]))
+            year_grade = item.get("yeargrade", "━")
 
-        table_cells.append([
-            _cell(name),
-            _cell(grades[0]),
-            _cell(grades[1]),
-            _cell(grades[2]),
-            _cell(grades[3]),
-            _cell(year_grade)
-        ])
+            while len(grades) < 4:
+                grades.append("━")
+
+            table_cells.append([
+                _cell(name),
+                _cell(grades[0]),
+                _cell(grades[1]),
+                _cell(grades[2]),
+                _cell(grades[3]),
+                _cell(year_grade)
+            ])
 
     blocks.append({
         "type": "table",

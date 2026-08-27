@@ -59,4 +59,19 @@ async def test_grades_period_handles_null_period_table():
     client._request = AsyncMock(return_value={"periodGradesTable": None})
 
     res = await client.grades_period(0)
-    assert res == []
+    assert res.get("disciplines") == []
+
+
+@pytest.mark.asyncio
+async def test_semester_system_detection():
+    client = DnevnikClient(access_token="test", refresh_token="refresh")
+    client.periods = [
+        {"id": "p0", "name": "Текущая неделя"},
+        {"id": "p1", "name": "Итоговые оценки"},
+        {"id": "p2", "name": "1 Полугодие"},
+        {"id": "p3", "name": "2 Полугодие"},
+    ]
+    assert client.is_semester_system() is True
+    study_periods = client.get_study_periods()
+    assert len(study_periods) == 2
+    assert study_periods[0]["name"] == "1 Полугодие"

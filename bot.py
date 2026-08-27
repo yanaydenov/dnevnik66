@@ -232,11 +232,17 @@ def build_schedule_keyboard(selected_day: int) -> InlineKeyboardMarkup:
     )
 
 
-def build_grades_nav_keyboard(selected_period: Optional[int]) -> InlineKeyboardMarkup:
-    """Builds interactive quarter navigation buttons [ 1 ч. | 2 четв | 3 четв | 4 четв | Год ]"""
+def build_grades_nav_keyboard(client: DnevnikClient, selected_period: Optional[int]) -> InlineKeyboardMarkup:
+    """Builds interactive quarter or semester navigation buttons [ 1 ч. | 2 четв | 3 четв | 4 четв | Год ] or [ 1 полуг. | 2 полуг. | Год ]"""
+    study_periods = client.get_study_periods()
+    is_semester = client.is_semester_system()
     row = []
-    for idx in range(4):
-        text = f"• {idx + 1} ч. •" if selected_period == idx else f"{idx + 1} четв"
+    for idx, p in enumerate(study_periods):
+        if is_semester:
+            label = f"{idx + 1} полуг."
+        else:
+            label = f"{idx + 1} четв"
+        text = f"• {label} •" if selected_period == idx else label
         row.append(InlineKeyboardButton(text=text, callback_data=f"pgrades{idx}"))
     year_text = "• Год •" if selected_period is None else "Год 📑"
     row.append(InlineKeyboardButton(text=year_text, callback_data="ygrades"))
@@ -268,15 +274,38 @@ async def send_grades_menu(bot: Bot, user_id: int, chat_id: int, message_id: Opt
         await bot.send_message(chat_id, "Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
         return
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Оценки на этой неделе", callback_data="wgrades")],
-            [InlineKeyboardButton(text="1 четверть", callback_data="pgrades0"), InlineKeyboardButton(text="2 четверть", callback_data="pgrades1")],
-            [InlineKeyboardButton(text="3 четверть", callback_data="pgrades2"), InlineKeyboardButton(text="4 четверть", callback_data="pgrades3")],
-            [InlineKeyboardButton(text="📑 Итоги по четвертям (Год)", callback_data="ygrades")],
-        ]
-    )
-    text = "📊 Выберите период для просмотра оценок:"
+    try:
+        await client.init_ids()
+    except Exception as e:
+        logger.warning(f"Could not init ids in send_grades_menu: {e}")
+
+    study_periods = client.get_study_periods()
+    is_semester = client.is_semester_system()
+
+    rows = [[InlineKeyboardButton(text="📋 Оценки на этой неделе", callback_data="wgrades")]]
+    if is_semester:
+        period_btns = []
+        for idx, p in enumerate(study_periods):
+            name = p.get("name") or f"{idx + 1} полугодие"
+            period_btns.append(InlineKeyboardButton(text=name, callback_data=f"pgrades{idx}"))
+        if period_btns:
+            rows.append(period_btns)
+        rows.append([InlineKeyboardButton(text="📑 Итоги по полугодиям (Год)", callback_data="ygrades")])
+        text = "📊 Выберите период (полугодия):"
+    else:
+        period_btns = []
+        for idx, p in enumerate(study_periods):
+            name = p.get("name") or f"{idx + 1} четверть"
+            period_btns.append(InlineKeyboardButton(text=name, callback_data=f"pgrades{idx}"))
+        if len(period_btns) == 4:
+            rows.append(period_btns[:2])
+            rows.append(period_btns[2:])
+        elif period_btns:
+            rows.append(period_btns)
+        rows.append([InlineKeyboardButton(text="📑 Итоги по четвертям (Год)", callback_data="ygrades")])
+        text = "📊 Выберите период (четверти):"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     if message_id:
         try:
             await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=kb)
@@ -572,10 +601,11 @@ async def cmd_wgrades(message: Message):
         return
 
     try:
+        await client.init_ids()
         gr = await client.grades_week()
         blocks = rf.rich_week_grades(gr)
         fallback = format_week_grades_message(gr)
-        kb = build_grades_nav_keyboard(None)
+        kb = build_grades_nav_keyboard(client, None)
         await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Week grades error: {e}")
@@ -590,14 +620,15 @@ async def cmd_pgrades(message: Message):
         return
 
     try:
+        await client.init_ids()
         year_grades = await client.grades_year()
         blocks = rf.rich_year_grades(year_grades)
         fallback = format_year_grades_message(year_grades)
-        kb = build_grades_nav_keyboard(None)
+        kb = build_grades_nav_keyboard(client, None)
         await send_rich_msg(message.bot, message.from_user.id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
-        await message.answer("Не удалось получить четвертные оценки.")
+        await message.answer("Не удалось получить итоговые оценки.")
 
 
 async def send_period_grades(message_or_query: Message | CallbackQuery, period_idx: int, edit_in_place: bool = False):
@@ -611,10 +642,10 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
         return
 
     try:
-        disciplines = await client.grades_period(period_idx)
-        blocks = rf.rich_period_grades(period_idx + 1, disciplines)
-        fallback = format_period_grades_message(period_idx + 1, disciplines)
-        kb = build_grades_nav_keyboard(period_idx)
+        period_data = await client.grades_period(period_idx)
+        blocks = rf.rich_period_grades(period_data)
+        fallback = format_period_grades_message(period_data)
+        kb = build_grades_nav_keyboard(client, period_idx)
 
         if edit_in_place and isinstance(message_or_query, CallbackQuery):
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback, reply_markup=kb)
@@ -622,7 +653,7 @@ async def send_period_grades(message_or_query: Message | CallbackQuery, period_i
             await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Period grades error: {e}")
-        await bot.send_message(chat_id, "Не удалось получить оценки за четверть.")
+        await bot.send_message(chat_id, "Не удалось получить оценки за период.")
 
 
 async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_place: bool = False):
@@ -639,7 +670,7 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
         year_grades = await client.grades_year()
         blocks = rf.rich_year_grades(year_grades)
         fallback = format_year_grades_message(year_grades)
-        kb = build_grades_nav_keyboard(None)
+        kb = build_grades_nav_keyboard(client, None)
 
         if edit_in_place and isinstance(message_or_query, CallbackQuery):
             await edit_rich_msg(bot, chat_id, message_or_query.message.message_id, blocks, fallback, reply_markup=kb)
@@ -647,7 +678,7 @@ async def send_year_grades(message_or_query: Message | CallbackQuery, edit_in_pl
             await send_rich_msg(bot, chat_id, blocks, fallback, reply_markup=kb)
     except Exception as e:
         logger.error(f"Year grades error: {e}")
-        await bot.send_message(chat_id, "Не удалось получить четвертные оценки.")
+        await bot.send_message(chat_id, "Не удалось получить итоговые оценки.")
 
 
 # -------------------------------------------------------------
@@ -837,10 +868,11 @@ async def handle_callback_query(query: CallbackQuery):
 
     elif data == "wgrades":
         try:
+            await client.init_ids()
             gr = await client.grades_week()
             blocks = rf.rich_week_grades(gr)
             fallback = format_week_grades_message(gr)
-            kb = build_grades_nav_keyboard(None)
+            kb = build_grades_nav_keyboard(client, None)
             await edit_rich_msg(bot, chat_id, query.message.message_id, blocks, fallback, reply_markup=kb)
         except Exception as e:
             logger.error(f"Week grades error: {e}")
@@ -882,7 +914,7 @@ async def set_my_commands(bot: Bot):
         BotCommand(command="all", description="🗓 Расписание уроков (выбор дня)"),
         BotCommand(command="grades", description="📋 Все оценки"),
         BotCommand(command="wgrades", description="📋 Оценки на этой неделе"),
-        BotCommand(command="pgrades", description="📋 Оценки по четвертям"),
+        BotCommand(command="pgrades", description="📋 Оценки по четвертям / полугодиям"),
         BotCommand(command="homework", description="✍️ Домашнее задание"),
         BotCommand(command="year", description="🗓 Сменить учебный год"),
         BotCommand(command="calls", description="🔔 Расписание звонков"),

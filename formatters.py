@@ -112,9 +112,23 @@ def format_schedule_message(day_idx: int, lessons: List[Dict[str, Any]]) -> str:
     return res
 
 
-def format_period_grades_message(period_num: int, disciplines: List[Dict[str, Any]]) -> str:
-    """Formats quarter grades with average calculation and badges"""
-    res = f"📊 *Оценки за {period_num} четверть*\n\n"
+def format_period_grades_message(
+    period: Union[int, str, Dict[str, Any]],
+    disciplines: Optional[List[Dict[str, Any]]] = None,
+    is_semester: bool = False
+) -> str:
+    """Formats quarter/semester grades with average calculation and badges"""
+    if isinstance(period, dict):
+        period_title = period.get("period_name") or f"Период {period.get('period_idx', 0) + 1}"
+        disciplines = period.get("disciplines") or []
+    elif isinstance(period, int):
+        period_word = "полугодие" if is_semester else "четверть"
+        period_title = f"{period} {period_word}"
+    else:
+        period_title = str(period)
+
+    res = f"📊 *Оценки за {esc_md(period_title)}*\n\n"
+    disciplines = disciplines or []
     has_grades = False
 
     for d in disciplines:
@@ -171,20 +185,37 @@ def format_week_grades_message(grades_dict: Dict[str, List[Any]]) -> str:
     return res
 
 
-def format_year_grades_message(year_grades: List[Dict[str, Any]]) -> str:
-    """Formats quarter and yearly final grades with structured column alignment"""
-    if not year_grades:
-        return "📑 *Четвертные и итоговые оценки*\n\n✨ _Четвертные оценки пока отсутствуют_"
+def format_year_grades_message(
+    year_grades: Union[List[Dict[str, Any]], Dict[str, Any]],
+    is_semester: bool = False
+) -> str:
+    """Formats quarter/semester and yearly final grades with structured column alignment"""
+    if isinstance(year_grades, dict):
+        items = year_grades.get("disciplines") or year_grades.get("items") or []
+        is_semester = year_grades.get("is_semester", is_semester)
+    else:
+        items = year_grades
 
-    res = "📑 *Четвертные и итоговые оценки*\n\n"
-    for item in year_grades:
+    period_type_label = "полугодиям" if is_semester else "четвертям"
+    if not items:
+        return f"📑 *Оценки по {esc_md(period_type_label)} и итог*\n\n✨ _Оценки по {esc_md(period_type_label)} пока отсутствуют_"
+
+    res = f"📑 *Оценки по {esc_md(period_type_label)} и итог*\n\n"
+    for item in items:
         name = item.get("name", "")
-        grades = item.get("grades", ["━", "━", "━", "━"])
+        grades = list(item.get("grades", []))
         year_grade = item.get("yeargrade", "━")
 
         badges = [format_grade_badge(g) for g in grades]
-        # Quarter markers I, II, III, IV
-        q_str = f"I: {badges[0]} │ II: {badges[1]} │ III: {badges[2]} │ IV: {badges[3]}"
+        if is_semester:
+            while len(badges) < 2:
+                badges.append(format_grade_badge("━"))
+            q_str = f"I: {badges[0]} │ II: {badges[1]}"
+        else:
+            while len(badges) < 4:
+                badges.append(format_grade_badge("━"))
+            q_str = f"I: {badges[0]} │ II: {badges[1]} │ III: {badges[2]} │ IV: {badges[3]}"
+
         res += f"📖 *{esc_md(name)}*\n"
         res += f"└ {q_str} ➔ *Итог:* {format_grade_badge(year_grade)}\n\n"
 

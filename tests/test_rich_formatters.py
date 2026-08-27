@@ -29,18 +29,35 @@ def test_rich_period_grades():
     disciplines = [
         {"name": "Алгебра", "grades": ["5", "4"], "average": 4.5, "averagew": 4.6}
     ]
-    blocks = rf.rich_period_grades(1, disciplines)
-    assert any(b.get("type") == "heading" for b in blocks)
-    assert any(b.get("type") == "table" for b in blocks)
+    # Quarter test
+    blocks_q = rf.rich_period_grades(1, disciplines, is_semester=False)
+    assert any(b.get("type") == "heading" and "четверть" in b.get("text", "") for b in blocks_q)
+    assert any(b.get("type") == "table" for b in blocks_q)
+
+    # Semester test
+    blocks_s = rf.rich_period_grades({"period_name": "1 Полугодие", "is_semester": True, "disciplines": disciplines})
+    assert any(b.get("type") == "heading" and "Полугодие" in b.get("text", "") for b in blocks_s)
 
 
 def test_rich_year_grades():
-    year_grades = [
+    year_grades_q = [
         {"name": "Алгебра", "grades": ["5", "4", "5", "5"], "yeargrade": "5"}
     ]
-    blocks = rf.rich_year_grades(year_grades)
-    assert any(b.get("type") == "heading" for b in blocks)
-    assert any(b.get("type") == "table" for b in blocks)
+    blocks_q = rf.rich_year_grades(year_grades_q, is_semester=False)
+    assert any(b.get("type") == "heading" and "четвертям" in b.get("text", "") for b in blocks_q)
+    assert any(b.get("type") == "table" for b in blocks_q)
+
+    year_grades_s = {
+        "is_semester": True,
+        "disciplines": [
+            {"name": "Геометрия", "grades": ["4", "3"], "yeargrade": "3"}
+        ]
+    }
+    blocks_s = rf.rich_year_grades(year_grades_s)
+    assert any(b.get("type") == "heading" and "полугодиям" in b.get("text", "") for b in blocks_s)
+    table_block = next(b for b in blocks_s if b.get("type") == "table")
+    # Header cells for semester: Предмет, I, II, Год (4 columns)
+    assert len(table_block["cells"][0]) == 4
 
 
 def test_rich_calls():
