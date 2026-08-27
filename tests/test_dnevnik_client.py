@@ -45,3 +45,18 @@ async def test_init_ids_passes_class_id():
     assert client.class_id == "class-abc-123"
     assert client.school_year == "2025"
     assert len(client.periods_ids) == 6
+
+
+@pytest.mark.asyncio
+async def test_grades_period_handles_null_period_table():
+    client = DnevnikClient(access_token="test", refresh_token="refresh")
+    client.student_id = "s1"
+    client.class_id = "c1"
+    client.school_year = "2025"
+    client.periods_ids = ["p1", "p2", "p3", "p4"]
+
+    # API returns 200 OK but with periodGradesTable as null
+    client._request = AsyncMock(return_value={"periodGradesTable": None})
+
+    res = await client.grades_period(0)
+    assert res == []

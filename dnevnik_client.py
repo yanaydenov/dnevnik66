@@ -229,17 +229,23 @@ class DnevnikClient:
             params["date"] = date_str
 
         data = await self._request("GET", "/schedule", params=params)
-        days = data.get("scheduleModel", {}).get("days", []) if isinstance(data, dict) else []
+        if not isinstance(data, dict):
+            return []
+
+        schedule_model = data.get("scheduleModel") or {}
+        days = schedule_model.get("days") or []
 
         if day_idx < len(days):
-            target_day = days[day_idx]
-            lesson_models = target_day.get("scheduleDayLessonModels", [])
+            target_day = days[day_idx] or {}
+            lesson_models = target_day.get("scheduleDayLessonModels") or []
             result = []
             for num, l in enumerate(lesson_models, 1):
+                if not isinstance(l, dict):
+                    continue
                 result.append({
-                    "num": str(l.get("number", num)),
-                    "name": l.get("lessonName", ""),
-                    "room": l.get("room", "") or "",
+                    "num": str(l.get("number") or num),
+                    "name": l.get("lessonName") or "",
+                    "room": l.get("room") or "",
                     "beginHour": l.get("beginHour"),
                     "beginMinute": l.get("beginMinute"),
                     "endHour": l.get("endHour"),
@@ -253,7 +259,8 @@ class DnevnikClient:
         params = {"studentId": self.student_id}
         if date_str:
             params["date"] = date_str
-        return await self._request("GET", "/schedule", params=params)
+        res = await self._request("GET", "/schedule", params=params)
+        return res if isinstance(res, dict) else {}
 
     async def homework(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """Returns homework data for a date with pagination links"""
@@ -263,16 +270,21 @@ class DnevnikClient:
             params["date"] = date_str
 
         hw = await self._request("GET", "/homework", params=params)
+        if not isinstance(hw, dict):
+            hw = {}
+
         result = {
-            "date": hw.get("date", datetime.now().strftime("%Y-%m-%d")),
-            "pages": hw.get("pagination", {}),
+            "date": hw.get("date") or datetime.now().strftime("%Y-%m-%d"),
+            "pages": hw.get("pagination") or {},
             "homework": []
         }
-        for item in hw.get("homeworks", []):
-            files = item.get("homeWorkFiles", [])
+        for item in (hw.get("homeworks") or []):
+            if not isinstance(item, dict):
+                continue
+            files = item.get("homeWorkFiles") or []
             result["homework"].append({
-                "lessonName": item.get("lessonName", ""),
-                "description": item.get("description", "") or "Нет задания",
+                "lessonName": item.get("lessonName") or "",
+                "description": item.get("description") or "Нет задания",
                 "filesCount": len(files),
                 "files": files,
                 "isDone": item.get("isDone", False),
@@ -294,11 +306,20 @@ class DnevnikClient:
             "studentId": self.student_id,
         })
 
+        if not isinstance(data, dict):
+            return {}
+
+        week_table = data.get("weekGradesTable") or {}
+        days = week_table.get("days") or []
         res: Dict[str, List[List[Any]]] = {}
-        for day in data.get("weekGradesTable", {}).get("days", []):
-            for item in day.get("lessonGrades", []):
-                name = item.get("name", "")
-                grades = item.get("grades", [])
+        for day in days:
+            if not isinstance(day, dict):
+                continue
+            for item in (day.get("lessonGrades") or []):
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name") or ""
+                grades = item.get("grades") or []
                 if name in res:
                     res[name].extend(grades)
                 else:
@@ -323,16 +344,29 @@ class DnevnikClient:
             "studentId": self.student_id,
         })
 
+        if not isinstance(data, dict):
+            return []
+
+        period_table = data.get("periodGradesTable") or {}
+        disciplines = period_table.get("disciplines") or []
         res = []
-        for disc in data.get("periodGradesTable", {}).get("disciplines", []):
+        for disc in disciplines:
+            if not isinstance(disc, dict):
+                continue
             all_grades = []
-            for grp in disc.get("grades", []):
-                for g in grp.get("grades", []):
-                    all_grades.append(g)
+            for grp in (disc.get("grades") or []):
+                if isinstance(grp, dict):
+                    for g in (grp.get("grades") or []):
+                        all_grades.append(g)
+                elif isinstance(grp, list):
+                    all_grades.extend(grp)
+                elif grp is not None:
+                    all_grades.append(grp)
+
             res.append({
-                "name": disc.get("name", ""),
-                "average": disc.get("averageGrade", 0.0),
-                "averagew": disc.get("averageWeightedGrade", 0.0),
+                "name": disc.get("name") or "",
+                "average": disc.get("averageGrade") or 0.0,
+                "averagew": disc.get("averageWeightedGrade") or 0.0,
                 "grades": all_grades,
             })
         return res
@@ -343,7 +377,7 @@ class DnevnikClient:
         if len(self.periods_ids) < 2:
             return []
 
-        year_period_id = self.periods_ids[1]
+        year_period_id = self.periods_ids[1] if len(self.periods_ids) >= 2 else self.periods_ids[0]
         data = await self._request("GET", "/estimate", params={
             "schoolYear": self.school_year,
             "classId": self.class_id,
@@ -352,20 +386,32 @@ class DnevnikClient:
             "studentId": self.student_id,
         })
 
+        if not isinstance(data, dict):
+            return []
+
+        year_table = data.get("yearGradesTable") or {}
+        lesson_grades = year_table.get("lessonGrades") or []
         res = []
-        for item in data.get("yearGradesTable", {}).get("lessonGrades", []):
-            lesson_name = item.get("lesson", {}).get("name", item.get("name", ""))
+        for item in lesson_grades:
+            if not isinstance(item, dict):
+                continue
+            lesson = item.get("lesson") or {}
+            lesson_name = lesson.get("name") if isinstance(lesson, dict) else item.get("name") or ""
             quarter_grades = []
-            for g in item.get("grades", []):
-                quarter_grades.append(g.get("finallygrade") or "━")
+            for g in (item.get("grades") or []):
+                if isinstance(g, dict):
+                    quarter_grades.append(g.get("finallygrade") or g.get("finallyGrade") or "━")
+                elif g is not None:
+                    quarter_grades.append(str(g))
 
             # Pad to 4 quarters if less
             while len(quarter_grades) < 4:
                 quarter_grades.append("━")
 
+            year_grade = item.get("yearGrade") or item.get("finallyGrade") or item.get("finallygrade") or "━"
             res.append({
                 "name": lesson_name,
                 "grades": quarter_grades[:4],
-                "yeargrade": item.get("yearGrade") or item.get("finallyGrade") or "━",
+                "yeargrade": year_grade,
             })
         return res
