@@ -301,7 +301,7 @@ class DnevnikClient:
 
         if day_idx < len(days):
             target_day = days[day_idx] or {}
-            day_date = target_day.get("date") or target_day.get("dayDate") or ""
+            day_date = str(target_day.get("date") or target_day.get("dayDate") or "").split("T")[0]
             lesson_models = target_day.get("scheduleDayLessonModels") or []
             result = []
             for num, l in enumerate(lesson_models, 1):

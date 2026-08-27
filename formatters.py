@@ -46,18 +46,63 @@ def format_file_plural(count: int) -> str:
     return words[count % 10]
 
 
+def parse_date_str(raw: Optional[Any]) -> Optional[datetime]:
+    """Robustly parses dates like '2025-05-14T00:00:00.000+05:00', '2025-05-14', '14.05.2025'"""
+    if not raw:
+        return None
+    raw_str = str(raw).strip()
+    if not raw_str:
+        return None
+
+    # Clean timestamp/timezone tail: '2025-05-14T00:00:00.000+05:00' -> '2025-05-14'
+    cleaned = raw_str.split("T")[0].split(" ")[0].strip()
+
+    # Try YYYY-MM-DD
+    if "-" in cleaned:
+        try:
+            parts = [int(p) for p in cleaned.split("-")]
+            if len(parts) >= 3:
+                return datetime(parts[0], parts[1], parts[2])
+        except Exception:
+            pass
+
+    # Try DD.MM.YYYY
+    if "." in cleaned:
+        try:
+            parts = [int(p) for p in cleaned.split(".")]
+            if len(parts) >= 3:
+                return datetime(parts[2], parts[1], parts[0])
+        except Exception:
+            pass
+
+    # Fallback to fromisoformat
+    try:
+        return datetime.fromisoformat(raw_str)
+    except Exception:
+        pass
+
+    return None
+
+
+def format_date_dmy(raw: Optional[Any]) -> str:
+    """Formats date to 'DD.MM.YYYY' (e.g. '14.05.2025')"""
+    dt = parse_date_str(raw)
+    if dt:
+        return f"{dt.day:02d}.{dt.month:02d}.{dt.year}"
+    return str(raw or "").split("T")[0]
+
+
 def format_homework_message(hw: Dict[str, Any]) -> str:
     """
     Formats homework using Telegram Expandable Blockquotes (**> ... ||)
     for sleek expandable descriptions.
     """
     date_raw = hw.get("date", "0001-01-01")
-    try:
-        parts = [int(i) for i in date_raw.split("-")]
-        dt = datetime(parts[0], parts[1], parts[2])
-        header = f"🗓 *{esc_md(WEEKDAYS[dt.weekday()])} • {parts[2]:02d}\\.{parts[1]:02d}\\.{parts[0]}*"
-    except Exception:
-        header = f"🗓 *{esc_md(date_raw)}*"
+    dt = parse_date_str(date_raw)
+    if dt:
+        header = f"🗓 *{esc_md(WEEKDAYS[dt.weekday()])} • {dt.day:02d}\\.{dt.month:02d}\\.{dt.year}*"
+    else:
+        header = f"🗓 *{esc_md(str(date_raw).split('T')[0])}*"
 
     res = header + "\n\n"
 
@@ -101,11 +146,11 @@ def format_schedule_message(
 
     date_title = ""
     if day_date:
-        try:
-            parts = [int(p) for p in day_date.split("-")]
-            date_title = f" • {parts[2]:02d}\\.{parts[1]:02d}\\.{parts[0]}"
-        except Exception:
-            date_title = f" • {esc_md(day_date)}"
+        dt = parse_date_str(day_date)
+        if dt:
+            date_title = f" • {dt.day:02d}\\.{dt.month:02d}\\.{dt.year}"
+        else:
+            date_title = f" • {esc_md(str(day_date).split('T')[0])}"
 
     res = f"🗓 *{esc_md(WEEKDAYS[day_idx])}{date_title}*\n\n"
     if day_idx == 6 or not lessons_list:

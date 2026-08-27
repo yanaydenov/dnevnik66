@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any, List, Union
-from datetime import datetime
-from formatters import WEEKDAYS, format_file_plural
+from datetime import datetime, timedelta
+from formatters import WEEKDAYS, format_file_plural, parse_date_str, format_date_dmy
 
 
 def _cell(text: Any) -> Dict[str, str]:
@@ -88,12 +88,12 @@ def rich_schedule(
     date_title = ""
     dt_obj = None
     if day_date:
-        try:
-            parts = [int(p) for p in day_date.split("-")]
-            dt_obj = datetime(parts[0], parts[1], parts[2])
-            date_title = f" • {parts[2]:02d}.{parts[1]:02d}.{parts[0]}"
-        except Exception:
-            date_title = f" • {day_date}"
+        dt_obj = parse_date_str(day_date)
+        if dt_obj:
+            date_title = f" • {dt_obj.day:02d}.{dt_obj.month:02d}.{dt_obj.year}"
+        else:
+            clean_str = str(day_date).split("T")[0]
+            date_title = f" • {clean_str}"
 
     heading_text = f"🗓 {weekday}{date_title}"
     blocks: List[Dict[str, Any]] = [
@@ -131,12 +131,10 @@ def rich_schedule(
     day_btns = []
     monday_dt = None
     if dt_obj:
-        from datetime import timedelta
         monday_dt = dt_obj - timedelta(days=day_idx)
 
     for idx, name in enumerate(days_short):
         if monday_dt:
-            from datetime import timedelta
             cur_dt = monday_dt + timedelta(days=idx)
             label = f"{name} {cur_dt.day:02d}.{cur_dt.month:02d}"
         else:
@@ -165,12 +163,11 @@ def rich_schedule(
 def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Generates Telegram Rich Message blocks with native Details/Accordions and file download buttons"""
     date_raw = hw.get("date", "0001-01-01")
-    try:
-        parts = [int(i) for i in date_raw.split("-")]
-        dt = datetime(parts[0], parts[1], parts[2])
-        header_title = f"🗓 {WEEKDAYS[dt.weekday()]} • {parts[2]:02d}.{parts[1]:02d}.{parts[0]}"
-    except Exception:
-        header_title = f"🗓 {date_raw}"
+    dt = parse_date_str(date_raw)
+    if dt:
+        header_title = f"🗓 {WEEKDAYS[dt.weekday()]} • {dt.day:02d}.{dt.month:02d}.{dt.year}"
+    else:
+        header_title = f"🗓 {str(date_raw).split('T')[0]}"
 
     blocks: List[Dict[str, Any]] = [
         {"type": "heading", "text": header_title, "size": 1},

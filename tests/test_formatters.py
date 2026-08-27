@@ -38,10 +38,20 @@ def test_format_schedule_message():
     lessons = [
         {"num": "1", "name": "Математика", "room": "204", "beginHour": 8, "beginMinute": 30, "endHour": 9, "endMinute": 10}
     ]
-    res = format_schedule_message(0, lessons)
+    res = format_schedule_message(0, lessons, day_date="2025-05-14T00:00:00.000+05:00")
     assert "Понедельник" in res
+    assert "14\\.05\\.2025" in res
     assert "Математика" in res
     assert "204" in res
+
+
+def test_parse_date_str():
+    from formatters import parse_date_str, format_date_dmy
+    dt1 = parse_date_str("2025-05-14T00:00:00.000+05:00")
+    assert dt1 is not None
+    assert dt1.year == 2025 and dt1.month == 5 and dt1.day == 14
+    assert format_date_dmy("2025-05-14T00:00:00.000+05:00") == "14.05.2025"
+    assert format_date_dmy("2025-05-14") == "14.05.2025"
 
 
 def test_format_homework_message():

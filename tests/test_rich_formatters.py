@@ -107,14 +107,14 @@ def test_rich_year_selection():
 
 def test_rich_schedule_with_dict_and_date():
     sched = {
-        "day_idx": 0,
-        "date": "2025-05-12",
+        "day_idx": 2,
+        "date": "2025-05-14T00:00:00.000+05:00",
         "lessons": [
             {"num": 1, "name": "Алгебра", "room": "204", "beginHour": 8, "beginMinute": 30, "endHour": 9, "endMinute": 10}
         ]
     }
-    blocks = rf.rich_schedule(0, sched)
-    assert any(b.get("type") == "heading" and "12.05.2025" in b.get("text", "") for b in blocks)
+    blocks = rf.rich_schedule(2, sched)
+    assert any(b.get("type") == "heading" and "14.05.2025" in b.get("text", "") for b in blocks)
     assert any(b.get("type") == "table" for b in blocks)
 
 
