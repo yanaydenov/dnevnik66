@@ -83,7 +83,7 @@ def rich_homework(hw: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Native accordion details block
         blocks.append({
             "type": "details",
-            "title": title_str,
+            "summary": title_str,
             "blocks": [
                 {"type": "paragraph", "text": desc}
             ]

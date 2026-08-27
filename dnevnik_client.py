@@ -37,6 +37,7 @@ class DnevnikClient:
         self.on_token_refreshed = on_token_refreshed
         self.student_id: Optional[str] = None
         self.class_id: Optional[str] = None
+        self.class_name: Optional[str] = None
         self.school_year: Optional[str] = str(school_year).strip() if school_year else None
         self.periods_ids: List[str] = []
         self._cached_profile: Optional[Dict[str, Any]] = None
@@ -200,10 +201,12 @@ class DnevnikClient:
                 # 2. Get class ID for this year
                 classes_res = await self._request("GET", "/classes", params={"studentId": self.student_id, "schoolYear": yr})
                 class_id = ""
+                class_name = ""
                 if isinstance(classes_res, dict):
                     curr_cls = classes_res.get("currentClass")
                     if isinstance(curr_cls, dict):
                         class_id = str(curr_cls.get("value") or curr_cls.get("id") or "")
+                        class_name = str(curr_cls.get("text") or "")
                     elif isinstance(curr_cls, str):
                         class_id = curr_cls
 
@@ -211,6 +214,7 @@ class DnevnikClient:
                         classes_list = classes_res.get("classes") or classes_res.get("gradeItemModels") or []
                         if classes_list and isinstance(classes_list[0], dict):
                             class_id = str(classes_list[0].get("value") or classes_list[0].get("id") or "")
+                            class_name = str(classes_list[0].get("text") or "")
 
                 if not class_id:
                     continue
@@ -226,8 +230,9 @@ class DnevnikClient:
                 if periods:
                     self.school_year = yr
                     self.class_id = class_id
+                    self.class_name = class_name
                     self.periods_ids = [p["id"] for p in periods if isinstance(p, dict) and "id" in p]
-                    logger.info(f"Initialized grades context: year={yr}, classId={class_id}, periods count={len(self.periods_ids)}")
+                    logger.info(f"Initialized grades context: year={yr}, classId={class_id}, className={class_name}, periods count={len(self.periods_ids)}")
                     return
             except Exception as e:
                 last_error = e

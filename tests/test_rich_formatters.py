@@ -20,7 +20,9 @@ def test_rich_homework():
     }
     blocks = rf.rich_homework(hw)
     assert any(b.get("type") == "heading" for b in blocks)
-    assert any(b.get("type") == "details" for b in blocks)
+    details_blocks = [b for b in blocks if b.get("type") == "details"]
+    assert len(details_blocks) == 1
+    assert "Русский язык" in details_blocks[0].get("summary", "")
 
 
 def test_rich_period_grades():
