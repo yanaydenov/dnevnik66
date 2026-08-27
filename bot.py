@@ -1,444 +1,572 @@
-import telebot
-from telebot import types
-from dnevnikc import *
-from datetime import datetime
-import os
-from dotenv import load_dotenv
-import db
+import asyncio
 import json
+import logging
+import sys
+from datetime import datetime
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    WebAppInfo,
+    BotCommand,
+)
+from aiogram.fsm.storage.memory import MemoryStorage
 
-load_dotenv()
-tgtoken = os.getenv('TOKEN')
-admin_tid = int(os.getenv('ADMIN_TELEGRAMID'))
-bot = telebot.TeleBot(tgtoken)
+from config import TELEGRAM_BOT_TOKEN, ADMIN_TELEGRAM_ID, WEBAPP_URL, ENABLE_WEBAPP_SERVER, WEBAPP_HOST, WEBAPP_PORT
+import database as db
+from dnevnik_client import DnevnikClient, DnevnikUnauthorizedError, DnevnikExternalServerError
+from formatters import (
+    esc_md,
+    format_homework_message,
+    format_schedule_message,
+    format_period_grades_message,
+    format_week_grades_message,
+    format_year_grades_message,
+    format_calls_message,
+    format_help_message,
+    WEEKDAYS,
+)
+from refresher import run_tokens_refresher_loop
+from webapp_server import run_webapp_server
 
-week = None
-weekdays = ['Понедельник', 'Вторник', 'Среда',
-            'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("dnevnik_bot")
 
-spec_chr = ['\\', '_', '*', '[', ']',
-            '(', ')', '~', '`', '>', '<', '&', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-
-
-def esc_md(text):
-    for char in spec_chr:
-        text = text.replace(char, f'\\{char}')
-    return text
-
-
-@bot.message_handler(commands=['db'])
-def showusers(message):
-    if message.chat.id == admin_tid:
-        users = db.list_tids()
-        print(users)
-        res = 'Зарегистрированные пользователи\\: *'+str(len(users))+'*\n\n'
-        for i in range(len(users)):
-            res += str(i+1)+'\\. `'+str(users[i])+'\n\n'
-            bot.send_message(admin_tid, res, parse_mode='MarkdownV2')
+dp = Dispatcher(storage=MemoryStorage())
 
 
-def buttons(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-        d = dnevnik(temp)
-        temp = d.profile()
-        b1 = types.KeyboardButton(
-            "🗓 Расписание"+" "+str(temp['className']))
-        b2 = types.KeyboardButton("На завтра")
-        b3 = types.KeyboardButton("На сегодня")
-        b4 = types.KeyboardButton("📋 Оценки на этой неделе")
-        b5 = types.KeyboardButton("📋 Все оценки")
-        b6 = types.KeyboardButton("📄 Список команд")
-        b7 = types.KeyboardButton("✍️ Домашние задания")
-        markup.add(b1).row(b2, b3).row(b5).row(b7, b4).row(b6)
-        return markup
+# Helper: get client for user with token decryption
+async def get_client(telegram_id: int) -> DnevnikClient | None:
+    user = await db.get_user(telegram_id)
+    if not user or not user.get("access_token") or not user.get("refresh_token"):
+        return None
+    return DnevnikClient(access_token=user["access_token"], refresh_token=user["refresh_token"])
+
+
+# Helper: generate user reply buttons with personalized class name
+async def get_reply_keyboard(telegram_id: int) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    user = await db.get_user(telegram_id)
+    if not user or not user.get("access_token"):
+        return ReplyKeyboardRemove()
+
+    class_name = user.get("meta", {}).get("className", "")
+    if not class_name:
+        try:
+            client = await get_client(telegram_id)
+            if client:
+                p = await client.profile()
+                class_name = p.get("className", "")
+                if class_name:
+                    meta = user.get("meta", {})
+                    meta["className"] = class_name
+                    await db.save_tokens(telegram_id, user["access_token"], user["refresh_token"], meta=meta)
+        except Exception:
+            class_name = ""
+
+    b_sched = KeyboardButton(text=f"🗓 Расписание {class_name}".strip())
+    b_tomorrow = KeyboardButton(text="На завтра")
+    b_today = KeyboardButton(text="На сегодня")
+    b_all_grades = KeyboardButton(text="📋 Все оценки")
+    b_hw = KeyboardButton(text="✍️ Домашние задания")
+    b_w_grades = KeyboardButton(text="📋 Оценки на этой неделе")
+    b_help = KeyboardButton(text="📄 Список команд")
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [b_sched],
+            [b_tomorrow, b_today],
+            [b_all_grades],
+            [b_hw, b_w_grades],
+            [b_help],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_unreg_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Регистрация", callback_data="reg")]
+        ]
+    )
+
+
+# -------------------------------------------------------------
+# Commands & Handlers
+# -------------------------------------------------------------
+
+@dp.message(Command("db"))
+async def show_users_admin(message: Message):
+    if message.from_user.id == ADMIN_TELEGRAM_ID and ADMIN_TELEGRAM_ID != 0:
+        user_ids = await db.get_all_user_ids()
+        res = f"Зарегистрированные пользователи\\: *{len(user_ids)}*\n\n"
+        for i, uid in enumerate(user_ids, 1):
+            res += f"{i}\\. `{uid}`\n"
+        await message.answer(res, parse_mode="MarkdownV2")
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or not user.get("access_token"):
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📄 Список команд", callback_data="help")],
+                [InlineKeyboardButton(text="✏️ Регистрация", callback_data="reg")],
+            ]
+        )
+        await message.answer(
+            "Здравствуйте! Зарегистрируйтесь, чтобы в дальнейшем пользоваться ботом",
+            reply_markup=kb,
+        )
     else:
-        return types.ReplyKeyboardRemove()
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📄 Список команд", callback_data="help")]
+            ]
+        )
+        reply_kb = await get_reply_keyboard(message.from_user.id)
+        await message.answer("Вы уже зарегистрированы", reply_markup=reply_kb)
 
 
-@bot.message_handler(commands=['pgrades'])
-def get_grades_year(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        res = ''
-        for i in d.grades_year():
-            for j in range(4):
-                if i['grades'][j] == None:
-                    i['grades'][j] = '━'
-            if i['yeargrade'] == None:
-                i['yeargrade'] = '━'
-            res += i['name']+'\n└ '+i['grades'][0]+' • '+i['grades'][1]+' • ' + \
-                i['grades'][2]+' • '+i['grades'][3] + \
-                '   Итог: '+i['yeargrade']+'\n'
-        if res != '':
-            res = 'Четвертные оценки\n\n'+res
-            bot.send_message(message.chat.id, res,
-                             reply_markup=buttons(message))
+@dp.message(Command("login"))
+async def cmd_login(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or not user.get("access_token"):
+        webapp = WebAppInfo(url=WEBAPP_URL)
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Регистрация", web_app=webapp)]],
+            resize_keyboard=True,
+        )
+        await message.answer(
+            "Чтобы зарегистрироваться, нажмите кнопку снизу\\.\n"
+            "Также прочтите инструкцию внутри формы\\.",
+            reply_markup=kb,
+            parse_mode="MarkdownV2",
+        )
+    else:
+        reply_kb = await get_reply_keyboard(message.from_user.id)
+        await message.answer("Вы уже зарегистрированы", reply_markup=reply_kb)
+
+
+@dp.message(F.web_app_data)
+async def handle_webapp_data(message: Message):
+    user_id = message.from_user.id
+    try:
+        temp = json.loads(message.web_app_data.data)
+        access_token = temp.get("accessToken", "").strip()
+        refresh_token = temp.get("refreshToken", "").strip()
+
+        client = DnevnikClient(access_token=access_token, refresh_token=refresh_token)
+        new_access, new_refresh = await client.refresh_tokens()
+
+        # Fetch profile to store student details
+        profile = await client.profile()
+        meta = {
+            "firstName": profile.get("firstName", ""),
+            "lastName": profile.get("lastName", ""),
+            "surName": profile.get("surName", ""),
+            "className": profile.get("className", ""),
+            "orgName": profile.get("orgName", ""),
+        }
+
+        await db.save_tokens(user_id, new_access, new_refresh, meta=meta, selected_student_id=profile.get("id"))
+
+        reply_kb = await get_reply_keyboard(user_id)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📄 Список команд", callback_data="help")]]
+        )
+        await message.answer("Вы успешно зарегистрировались!", reply_markup=reply_kb)
+        await message.answer("Выберите действие в меню снизу или откройте список команд:", reply_markup=kb)
+
+    except (DnevnikUnauthorizedError, Exception) as e:
+        logger.error(f"Login error: {e}")
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✏️ Попробовать снова", callback_data="reg")]]
+        )
+        await message.answer(
+            "Произошла ошибка. Возможно, вы ввели неверные или устаревшие токены.\nПопробуйте заново 👇",
+            reply_markup=kb,
+        )
+
+
+@dp.message(Command("help"))
+@dp.message(F.text.contains("Список команд"))
+async def cmd_help(message: Message):
+    reply_kb = await get_reply_keyboard(message.from_user.id)
+    await message.answer(format_help_message(), reply_markup=reply_kb, parse_mode="MarkdownV2")
+
+
+@dp.message(Command("calls"))
+async def cmd_calls(message: Message):
+    await message.answer(format_calls_message(), parse_mode="MarkdownV2")
+
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        p = await client.profile()
+        res = (
+            f"{p.get('lastName', '')} {p.get('firstName', '')} {p.get('surName', '')} {p.get('className', '')}\n"
+            f"{p.get('orgName', '')}\n\n"
+            "Удалить аккаунт — /delacc"
+        )
+        await message.answer(res)
+    except Exception as e:
+        logger.error(f"Profile error: {e}")
+        await message.answer("Не удалось получить данные профиля.")
+
+
+@dp.message(Command("delacc"))
+async def cmd_delacc(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or not user.get("access_token"):
+        await message.answer("Чтобы удалить аккаунт, нужно сначала зарегистрироваться", reply_markup=get_unreg_keyboard())
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да, удалить", callback_data="deleteacc1"),
+                InlineKeyboardButton(text="Нет, отмена", callback_data="deleteacc0"),
+            ]
+        ]
+    )
+    await message.answer("Удалить аккаунт?", reply_markup=kb)
+
+
+# -------------------------------------------------------------
+# Schedule Handlers
+# -------------------------------------------------------------
+
+async def send_schedule_day(message_or_query: Message | CallbackQuery, day_idx: int):
+    user_id = message_or_query.from_user.id
+    client = await get_client(user_id)
+    target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
+
+    if not client:
+        await target.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        lessons = await client.schedule(day_idx)
+        text = format_schedule_message(day_idx, lessons)
+        await target.answer(text, parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Schedule error: {e}")
+        await target.answer("Не удалось загрузить расписание.")
+
+
+@dp.message(Command("today"))
+@dp.message(F.text == "На сегодня")
+async def cmd_today(message: Message):
+    day_idx = datetime.now().weekday()
+    await send_schedule_day(message, day_idx)
+
+
+@dp.message(Command("nextday"))
+@dp.message(F.text == "На завтра")
+async def cmd_nextday(message: Message):
+    day_idx = (datetime.now().weekday() + 1) % 7
+    await send_schedule_day(message, day_idx)
+
+
+@dp.message(Command("all"))
+@dp.message(F.text.startswith("🗓 Расписание"))
+async def cmd_schedule_all(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Понедельник", callback_data="schedule0"), InlineKeyboardButton(text="Вторник", callback_data="schedule1")],
+            [InlineKeyboardButton(text="Среда", callback_data="schedule2"), InlineKeyboardButton(text="Четверг", callback_data="schedule3")],
+            [InlineKeyboardButton(text="Пятница", callback_data="schedule4"), InlineKeyboardButton(text="Суббота", callback_data="schedule5")],
+        ]
+    )
+    await message.answer("Выберите день", reply_markup=kb)
+
+
+# -------------------------------------------------------------
+# Grades Handlers
+# -------------------------------------------------------------
+
+@dp.message(Command("grades"))
+@dp.message(F.text == "📋 Все оценки")
+async def cmd_grades(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Текущая неделя", callback_data="wgrades")],
+            [InlineKeyboardButton(text="1 четверть", callback_data="pgrades0"), InlineKeyboardButton(text="2 четверть", callback_data="pgrades1")],
+            [InlineKeyboardButton(text="3 четверть", callback_data="pgrades2"), InlineKeyboardButton(text="4 четверть", callback_data="pgrades3")],
+            [InlineKeyboardButton(text="По четвертям", callback_data="ygrades")],
+        ]
+    )
+    await message.answer("Выберите период", reply_markup=kb)
+
+
+@dp.message(Command("wgrades"))
+@dp.message(F.text.contains("на этой неделе"))
+async def cmd_wgrades(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        gr = await client.grades_week()
+        text = format_week_grades_message(gr)
+        await message.answer(text, parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Week grades error: {e}")
+        await message.answer("Не удалось получить оценки за неделю.")
+
+
+@dp.message(Command("pgrades"))
+async def cmd_pgrades(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        year_grades = await client.grades_year()
+        text = format_year_grades_message(year_grades)
+        reply_kb = await get_reply_keyboard(message.from_user.id)
+        await message.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Year grades error: {e}")
+        await message.answer("Не удалось получить четвертные оценки.")
+
+
+async def send_period_grades(message_or_query: Message | CallbackQuery, period_idx: int):
+    user_id = message_or_query.from_user.id
+    client = await get_client(user_id)
+    target = message_or_query.message if isinstance(message_or_query, CallbackQuery) else message_or_query
+
+    if not client:
+        await target.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        disciplines = await client.grades_period(period_idx)
+        text = format_period_grades_message(period_idx + 1, disciplines)
+        reply_kb = await get_reply_keyboard(user_id)
+        await target.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Period grades error: {e}")
+        await target.answer("Не удалось получить оценки за четверть.")
+
+
+# -------------------------------------------------------------
+# Homework Handlers (with day-by-day interactive pagination)
+# -------------------------------------------------------------
+
+def build_hw_keyboard(pagination: dict) -> InlineKeyboardMarkup:
+    buttons = []
+    prev_date = pagination.get("previousDate")
+    next_date = pagination.get("nextDate")
+
+    row = []
+    if prev_date and prev_date != "0001-01-01":
+        row.append(InlineKeyboardButton(text="◀️", callback_data=f"hw{prev_date}"))
+    if next_date and next_date != "0001-01-01":
+        row.append(InlineKeyboardButton(text="▶️", callback_data=f"hw{next_date}"))
+
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@dp.message(Command("homework"))
+@dp.message(F.text.contains("Домашние"))
+async def cmd_homework(message: Message):
+    client = await get_client(message.from_user.id)
+    if not client:
+        await message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        return
+
+    try:
+        hw_data = await client.homework(None)
+        text = format_homework_message(hw_data)
+        kb = build_hw_keyboard(hw_data.get("pages", {}))
+        await message.answer(text, reply_markup=kb, parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Homework error: {e}")
+        await message.answer("Не удалось загрузить домашнее задание.")
+
+
+# -------------------------------------------------------------
+# Callback Query Handlers
+# -------------------------------------------------------------
+
+@dp.callback_query()
+async def handle_callback_query(query: CallbackQuery):
+    data = query.data or ""
+    user_id = query.from_user.id
+    client = await get_client(user_id)
+
+    if data == "reg":
+        await cmd_login(query.message)
+        await query.answer()
+        return
+
+    if data == "help":
+        await cmd_help(query.message)
+        await query.answer()
+        return
+
+    if not client:
+        await query.message.answer("Вы не зарегистрированы", reply_markup=get_unreg_keyboard())
+        await query.answer()
+        return
+
+    if data.startswith("schedule"):
+        day_idx = int(data[-1])
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await send_schedule_day(query, day_idx)
+
+    elif data.startswith("deleteacc"):
+        if data[-1] == "1":
+            await db.delete_tokens(user_id)
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="✏️ Повторная регистрация", callback_data="reg")]]
+            )
+            await query.message.answer("Ваш аккаунт удален", reply_markup=kb)
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
         else:
-            bot.send_message(
-                message.chat.id, 'Оценок в четвертях пока нет', reply_markup=buttons(message))
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+    elif data.startswith("pgrades"):
+        period_idx = int(data[-1])
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await send_period_grades(query, period_idx)
+
+    elif data == "wgrades":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        try:
+            gr = await client.grades_week()
+            text = format_week_grades_message(gr)
+            await query.message.answer(text, parse_mode="MarkdownV2")
+        except Exception as e:
+            logger.error(f"Week grades error: {e}")
+            await query.message.answer("Не удалось получить оценки за неделю.")
+
+    elif data == "ygrades":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        try:
+            year_grades = await client.grades_year()
+            text = format_year_grades_message(year_grades)
+            reply_kb = await get_reply_keyboard(user_id)
+            await query.message.answer(text, reply_markup=reply_kb, parse_mode="MarkdownV2")
+        except Exception as e:
+            logger.error(f"Year grades error: {e}")
+            await query.message.answer("Не удалось получить четвертные оценки.")
+
+    elif data.startswith("hw"):
+        date_str = data[2:]
+        try:
+            hw_data = await client.homework(date_str)
+            text = format_homework_message(hw_data)
+            kb = build_hw_keyboard(hw_data.get("pages", {}))
+            await query.message.edit_text(text, reply_markup=kb, parse_mode="MarkdownV2")
+        except Exception as e:
+            logger.error(f"HW edit error: {e}")
+
+    await query.answer()
 
 
-def get_grades_period(message, period):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        res = str(period+1)+' четверть\n\n'
-        for i in d.grades_period(period):
-            temp = ''
-            if i['grades'] != []:
-                for j in i['grades']:
-                    for u in j[:-1]:
-                        temp += u+'\\/'
-                    temp += j[-1]+' • '
-            if temp != '':
-                res += esc_md(i['name'])+" • " + \
-                    esc_md(str(round(i['averagew'], 2)))+"\n└ "+temp[:-2]+'\n'
-        if res == str(period+1)+' четверть\n\n':
-            res += '*Нет оценок*'
+# -------------------------------------------------------------
+# Main Application Launcher
+# -------------------------------------------------------------
 
-        bot.send_message(message.chat.id, res, reply_markup=buttons(
-            message), parse_mode='MarkdownV2')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
+async def set_my_commands(bot: Bot):
+    commands = [
+        BotCommand(command="start", description="🏠 Запустить бота"),
+        BotCommand(command="today", description="📅 Расписание на сегодня"),
+        BotCommand(command="nextday", description="📅 Расписание на завтра"),
+        BotCommand(command="all", description="🗓 Расписание на любой день"),
+        BotCommand(command="grades", description="📋 Все оценки"),
+        BotCommand(command="wgrades", description="📋 Оценки на этой неделе"),
+        BotCommand(command="pgrades", description="📋 Четвертные оценки"),
+        BotCommand(command="homework", description="✍️ Домашнее задание"),
+        BotCommand(command="profile", description="👤 Профиль ученика"),
+        BotCommand(command="calls", description="🔔 Расписание звонков"),
+        BotCommand(command="help", description="📄 Список команд"),
+        BotCommand(command="login", description="✏️ Регистрация"),
+        BotCommand(command="delacc", description="❌ Удалить аккаунт"),
+    ]
+    try:
+        await bot.set_my_commands(commands)
+    except Exception as e:
+        logger.warning(f"Could not set commands: {e}")
 
 
-@bot.message_handler(commands=['wgrades'])
-def get_grades_week(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        res = ''
-        gr = d.grades_week()
-        for i in gr:
-            res += i+'\n└ '
-            for j in gr[i]:
-                res += '/'.join(str(x) for x in j)+" • "
-            res = res[:-2]+'\n'
-        if res == '':
-            res = 'Текущая неделя\n\n*Нет оценок*'
-        else:
-            res = 'Текущая неделя\n\n'+esc_md(res)
-        bot.send_message(message.chat.id, res, parse_mode='MarkdownV2')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
+async def main():
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN is not set in environment or .env file!")
+        sys.exit(1)
+
+    await db.init_db()
+
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    await set_my_commands(bot)
+
+    refresher_task = asyncio.create_task(run_tokens_refresher_loop())
+
+    if ENABLE_WEBAPP_SERVER:
+        asyncio.create_task(run_webapp_server(host=WEBAPP_HOST, port=WEBAPP_PORT))
+
+    logger.info("Bot started and polling...")
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        refresher_task.cancel()
+        await bot.session.close()
 
 
-@bot.message_handler(commands=['start'])
-def start_message(message):
-    temp = db.get(message.chat.id)
-    if temp == None:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton(
-            "📄 Список команд", callback_data='help')
-        b2 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1).row(b2)
-        bot.send_message(
-            message.chat.id, 'Здравствуйте! Зарегистрируйтесь, чтобы в дальнейшем пользоваться ботом', reply_markup=markup)
-    else:
-        b1 = types.InlineKeyboardButton(
-            "📄 Список команд", callback_data='help')
-        markup = types.InlineKeyboardMarkup()
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, "Вы уже зарегистрированны", reply_markup=markup)
-
-
-@bot.message_handler(commands=['login'])
-def login(message):
-    if db.get(message.chat.id) == None:
-        webapp = types.WebAppInfo("https://zasdc.ru/static/bot/login.html")
-        b1 = types.KeyboardButton(text="Регистрация", web_app=webapp)
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, "Чтобы зарегистрироваться нажмите кнопку снизу\\. \nТакже обязательно прочтите [инструкцию](https://telegra.ph/Instrukciya-dlya-registracii-10-25)", reply_markup=markup, parse_mode='MarkdownV2')
-    else:
-        b1 = types.InlineKeyboardButton(
-            "📄 Список команд", callback_data='help')
-        markup = types.InlineKeyboardMarkup()
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, "Вы уже зарегистрированны", reply_markup=buttons(message))
-
-
-@bot.message_handler(content_types="web_app_data")
-def logindata(message):
-    temp = json.loads(message.web_app_data.data)
-    d = dnevnik((temp['accessToken'], temp['refreshToken']))
-    temp = d.refresh()
-    if temp == False:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton(
-            "✏️ Попробовать снова", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, "Произошла ошибка. Возможно вы ввели неверные токены.\nПопробуйте заного", reply_markup=markup)
-    else:
-        db.add(message.chat.id, temp[0], temp[1])
-        b1 = types.InlineKeyboardButton(
-            "📄 Список команд", callback_data='help')
-        markup = types.InlineKeyboardMarkup()
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы успешно зарегистрировались', reply_markup=markup)
-
-
-def schedule(message, day):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        res = weekdays[day]+'\n\n'
-        if day != 6:
-            sch = d.schedule(day)
-
-            if sch != []:
-                for i in sch:
-                    res += i['num']+'│'+esc_md(i['name'])+" • "+i['room']+"\n"
-            else:
-                res += "*В этот день уроков нет*"
-        else:
-            res += "*В этот день уроков нет*"
-        bot.send_message(message.chat.id, res, parse_mode='MarkdownV2')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
-
-
-@bot.message_handler(commands=['help'])
-def help(message):
-    msg = '🛠 Сервис\n/login • Регистрация\n/help • Это меню\n/profile • Информация об аккаунте\n/delacc • Удалить аккаунт в боте\n\n📅 Расписание\n/all • Расписание на любой день\n/today • Расписание на сегодня\n/nextday • Расписание на завтра\n/calls • Расписание звонков\n\n📋 Оценки\n/grades • Все оценки\n/wgrades • Оценки на этой неделе\n/pgrades • Четвертные оценки\n\n✍️ Домашнее задание\n/homework • ДЗ по дням'
-    bot.send_message(message.chat.id, msg, reply_markup=buttons(message))
-
-
-@bot.message_handler(commands=['delacc'])
-def deleteaccount(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("Да", callback_data='deleteacc1')
-        b2 = types.InlineKeyboardButton(
-            "Нет, отмена", callback_data='deleteacc0')
-        markup.add(b1, b2)
-        bot.send_message(message.chat.id, 'Удалить аккаунт?',
-                         reply_markup=markup)
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Чтобы удалить аккаунт, нужно зарегистрироваться', reply_markup=markup)
-
-
-
-@bot.message_handler(commands=['profile'])
-def profile(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        temp = d.profile()
-        bot.send_message(message.chat.id, temp['lastName']+" "+temp['firstName']+" "+temp['surName']+" "+
-            temp['className']+'\n'+temp['orgName']+'\n\nУдалить аккаунт - /delacc')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
-
-
-
-def texthomework(message, hw):
-    date = [int(i) for i in hw['date'].split('-')]
-    now = datetime(date[0], date[1], date[2])
-    res = esc_md(weekdays[now.weekday()]+' • '+str(date[2]) +
-                 '-'+str(date[1])+'-'+str(date[0])+'\n\n')
-    if hw['homework'] != []:
-        for i in hw['homework']:
-            files = ''
-            if i[2] != 0:
-                files = ' \\(📎 '+str(i[2])+' '+['файлов', 'файл', 'файла', 'файла', 'файла',
-                                                'файлов', 'файлов', 'файлов', 'файлов', 'файлов'][i[2] % 10]+'\\)'
-
-            res += esc_md(i[0])+files+':\n>'+esc_md(i[1])+'||\n'
-    else:
-        res += '*Нет домашних заданий*'
-    markup = types.InlineKeyboardMarkup()
-
-    cd1 = 0
-    if hw['pages']['previousDate'] != "0001-01-01":
-        cd1 = 'hw'+hw['pages']['previousDate']
-        b1 = types.InlineKeyboardButton("◀", callback_data=cd1)
-    cd2 = 0
-    if hw['pages']['nextDate'] != "0001-01-01":
-        cd2 = 'hw'+hw['pages']['nextDate']
-        b2 = types.InlineKeyboardButton("▶", callback_data=cd2)
-    if cd1 == 0:
-        markup.add(b2)
-    elif cd2 == 0:
-        markup.add(b1)
-    else:
-        markup.add(b1, b2)
-    return res, markup
-
-
-@bot.message_handler(commands=['homework'])
-def homework(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        d = dnevnik(temp)
-        temp = d.homework(None)
-        res, markup = texthomework(message, temp)
-        bot.send_message(message.chat.id, res,
-                         reply_markup=markup, parse_mode='MarkdownV2')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
-
-
-@bot.callback_query_handler(func=lambda callback: True)
-def callback_msg(callback):
-    temp = db.get(callback.message.chat.id)
-    if callback.data == 'reg':
-        login(callback.message)
-    elif callback.data == 'help':
-        help(callback.message)
-    elif temp != None:
-        if 'schedule' in callback.data:
-            bot.delete_message(callback.message.chat.id,
-                               callback.message.message_id)
-            schedule(callback.message, int(callback.data[-1]))
-        if 'deleteacc' in callback.data:
-            if callback.data[-1] == '1':
-                markup = types.InlineKeyboardMarkup()
-                b1 = types.InlineKeyboardButton(
-                    "✏️ Повторная регистрация", callback_data='reg')
-                markup.add(b1)
-                bot.send_message(callback.message.chat.id,
-                                 'Ваш аккаунт удален', reply_markup=markup)
-                bot.delete_message(callback.message.chat.id,
-                                   callback.message.message_id)
-            else:
-                bot.delete_message(callback.message.chat.id,
-                                   callback.message.message_id)
-
-        if 'grades' in callback.data:
-            if callback.data[0] == 'p':
-                bot.delete_message(callback.message.chat.id,
-                                   callback.message.message_id)
-                get_grades_period(callback.message, int(callback.data[-1]))
-            if callback.data[0] == 'w':
-                bot.delete_message(callback.message.chat.id,
-                                   callback.message.message_id)
-                get_grades_week(callback.message)
-            if callback.data[0] == 'y':
-                bot.delete_message(callback.message.chat.id,
-                                   callback.message.message_id)
-                get_grades_year(callback.message)
-        if 'hw' in callback.data:
-            d = dnevnik(temp)
-            temp = d.homework(callback.data[2:])
-            res, markup = texthomework(callback.message, temp)
-            bot.edit_message_text(chat_id=callback.message.chat.id, message_id=callback.message.message_id,
-                                  text=res, reply_markup=markup, parse_mode='MarkdownV2')
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(callback.message.chat.id,
-                         'Вы не зарегистрированны', reply_markup=markup)
-
-
-@bot.message_handler(commands=['calls'])
-def calls(message):
-    bot.send_message(message.chat.id, 'Расписание звонков\n\n1 │ 8:30 - 9:10\n2 │ 9:20 - 10:00\n3 │ 10:20 - 11:00\n4 │ 11:20 - 12:00\n5 │ 12:20 - 13:00\n6 │ 13:10 - 13:50\n7 │ 14:05 - 14:45\n8 │ 14:55 - 15:35')
-
-
-@bot.message_handler(commands=['grades'])
-def grades_select(message):
-    temp = db.get(message.chat.id)
-    if temp != None:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton(
-            "Текущая неделя", callback_data='wgrades')
-        b2 = types.InlineKeyboardButton("1 четверть", callback_data='pgrades0')
-        b3 = types.InlineKeyboardButton("2 четверть", callback_data='pgrades1')
-        b4 = types.InlineKeyboardButton("3 четверть", callback_data='pgrades2')
-        b5 = types.InlineKeyboardButton("4 четверть", callback_data='pgrades3')
-        b6 = types.InlineKeyboardButton(
-            "По четвертям", callback_data='ygrades')
-        markup.add(b1).row(b2, b3).row(b4, b5).row(b6)
-        bot.send_message(message.chat.id, 'Выберите период',
-                         reply_markup=markup)
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
-
-
-@bot.message_handler(content_types=['text'])
-def text(message):
-    temp = db.get(message.chat.id)
-    if 'Список команд' in message.text:
-        help(message)
-    elif temp != None:
-        if message.text == 'На сегодня' or message.text == '/today':
-            schedule(message, datetime.now().weekday())
-        elif message.text == 'На завтра' or message.text == '/nextday':
-            schedule(message, (datetime.now().weekday()+1) % 7)
-        elif 'Расписание ' in message.text or message.text == '/all':
-            markup = types.InlineKeyboardMarkup()
-            b1 = types.InlineKeyboardButton(
-                "Понедельник", callback_data='schedule0')
-            b2 = types.InlineKeyboardButton(
-                "Вторник", callback_data='schedule1')
-            b3 = types.InlineKeyboardButton("Среда", callback_data='schedule2')
-            b4 = types.InlineKeyboardButton(
-                "Четверг", callback_data='schedule3')
-            b5 = types.InlineKeyboardButton(
-                "Пятница", callback_data='schedule4')
-            b6 = types.InlineKeyboardButton(
-                "Суббота", callback_data='schedule5')
-            markup.add(b1, b2, b3, b4, b5, b6)
-            bot.send_message(message.chat.id, 'Выберите день',
-                             reply_markup=markup)
-        elif 'на этой неделе' in message.text:
-            get_grades_week(message)
-        elif 'Все оценки' in message.text:
-            grades_select(message)
-        elif 'Домашние' in message.text:
-            homework(message)
-
-    else:
-        markup = types.InlineKeyboardMarkup()
-        b1 = types.InlineKeyboardButton("✏️ Регистрация", callback_data='reg')
-        markup.add(b1)
-        bot.send_message(
-            message.chat.id, 'Вы не зарегистрированны', reply_markup=markup)
-
-
-bot.infinity_polling()
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
